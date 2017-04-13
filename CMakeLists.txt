@@ -16,6 +16,6 @@ endforeach(flag)
 
 include_directories(${CMAKE_SOURCE_DIR})
 
-add_executable(${PROJECT_NAME} main.c client.c sockutil.c)
+add_executable(${PROJECT_NAME} main.c client.c sockutil.c verbose.c)
 target_link_libraries(${PROJECT_NAME} ${pkgs_LDFLAGS})
 

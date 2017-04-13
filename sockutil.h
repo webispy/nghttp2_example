@@ -1,10 +1,13 @@
 #ifndef __SOCKUTIL_H__
 #define __SOCKUTIL_H__
 
-void init_ssl_ctx(SSL_CTX *ssl_ctx);
-void ssl_handshake(SSL *ssl, int fd);
-int connect_to(const char *host, uint16_t port);
-void make_non_block(int fd);
-void set_tcp_nodelay(int fd);
+struct SSLConnection {
+  SSL_CTX *ssl_ctx;
+  SSL *ssl;
+  int fd;
+};
+
+struct SSLConnection *sockutil_setup_connection(const char *host, uint16_t port);
+void sockutil_destroy_connection(struct SSLConnection *conn);
 
 #endif

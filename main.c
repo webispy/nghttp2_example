@@ -15,6 +15,7 @@ int main(int argc, char **argv)
   struct URI uri;
   struct sigaction act;
   int rv;
+  int i;
 
   if (argc < 2) {
     fprintf(stderr, "Specify a https URI\n");
@@ -28,13 +29,16 @@ int main(int argc, char **argv)
   SSL_load_error_strings();
   SSL_library_init();
 
-  rv = parse_uri(&uri, argv[1]);
-  if (rv != 0) {
-    fprintf(stderr, "parse_uri failed\n");
-    exit(EXIT_FAILURE);
-  }
+  for (i = 1; i < argc; i++) {
+    printf("Try %s\n", argv[i]);
+    rv = parse_uri(&uri, argv[i]);
+    if (rv != 0) {
+      fprintf(stderr, "parse_uri failed\n");
+      exit(EXIT_FAILURE);
+    }
 
-  fetch_uri(&uri);
+    fetch_uri(&uri);
+  }
 
   return EXIT_SUCCESS;
 }
