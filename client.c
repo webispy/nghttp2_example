@@ -26,17 +26,10 @@
  * This program is written to show how to use nghttp2 API in C and
  * intentionally made simple.
  */
-#include <inttypes.h>
 #include <stdlib.h>
 #include <unistd.h>
-#include <fcntl.h>
-#include <sys/types.h>
 #include <sys/socket.h>
-#include <netdb.h>
-#include <netinet/in.h>
-#include <netinet/tcp.h>
 #include <poll.h>
-#include <signal.h>
 #include <stdio.h>
 #include <assert.h>
 #include <string.h>
@@ -47,6 +40,9 @@
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 #include <openssl/conf.h>
+
+#include "client.h"
+#include "sockutil.h"
 
 enum { IO_NONE, WANT_READ, WANT_WRITE };
 
@@ -72,29 +68,6 @@ struct Connection {
      nghttp2_session_want_write() but they do not take into account
      SSL/TSL connection. */
   int want_io;
-};
-
-struct Request {
-  char *host;
-  /* In this program, path contains query component as well. */
-  char *path;
-  /* This is the concatenation of host and port with ":" in
-     between. */
-  char *hostport;
-  /* Stream ID for this request. */
-  int32_t stream_id;
-  uint16_t port;
-};
-
-struct URI {
-  const char *host;
-  /* In this program, path contains query component as well. */
-  const char *path;
-  size_t pathlen;
-  const char *hostport;
-  size_t hostlen;
-  size_t hostportlen;
-  uint16_t port;
 };
 
 /*
@@ -332,110 +305,6 @@ static void setup_nghttp2_callbacks(nghttp2_session_callbacks *callbacks) {
 }
 
 /*
- * Callback function for TLS NPN. Since this program only supports
- * HTTP/2 protocol, if server does not offer HTTP/2 the nghttp2
- * library supports, we terminate program.
- */
-static int select_next_proto_cb(SSL *ssl, unsigned char **out,
-                                unsigned char *outlen, const unsigned char *in,
-                                unsigned int inlen, void *arg) {
-  int rv;
-  (void)ssl;
-  (void)arg;
-
-  /* nghttp2_select_next_protocol() selects HTTP/2 protocol the
-     nghttp2 library supports. */
-  rv = nghttp2_select_next_protocol(out, outlen, in, inlen);
-  if (rv <= 0) {
-    die("Server did not advertise HTTP/2 protocol");
-  }
-  return SSL_TLSEXT_ERR_OK;
-}
-
-/*
- * Setup SSL/TLS context.
- */
-static void init_ssl_ctx(SSL_CTX *ssl_ctx) {
-  /* Disable SSLv2 and enable all workarounds for buggy servers */
-  SSL_CTX_set_options(ssl_ctx, SSL_OP_ALL | SSL_OP_NO_SSLv2);
-  SSL_CTX_set_mode(ssl_ctx, SSL_MODE_AUTO_RETRY);
-  SSL_CTX_set_mode(ssl_ctx, SSL_MODE_RELEASE_BUFFERS);
-  /* Set NPN callback */
-  SSL_CTX_set_next_proto_select_cb(ssl_ctx, select_next_proto_cb, NULL);
-}
-
-static void ssl_handshake(SSL *ssl, int fd) {
-  int rv;
-  if (SSL_set_fd(ssl, fd) == 0) {
-    dief("SSL_set_fd", ERR_error_string(ERR_get_error(), NULL));
-  }
-  ERR_clear_error();
-  rv = SSL_connect(ssl);
-  if (rv <= 0) {
-    dief("SSL_connect", ERR_error_string(ERR_get_error(), NULL));
-  }
-}
-
-/*
- * Connects to the host |host| and port |port|.  This function returns
- * the file descriptor of the client socket.
- */
-static int connect_to(const char *host, uint16_t port) {
-  struct addrinfo hints;
-  int fd = -1;
-  int rv;
-  char service[NI_MAXSERV];
-  struct addrinfo *res, *rp;
-  snprintf(service, sizeof(service), "%u", port);
-  memset(&hints, 0, sizeof(struct addrinfo));
-  hints.ai_family = AF_UNSPEC;
-  hints.ai_socktype = SOCK_STREAM;
-  rv = getaddrinfo(host, service, &hints, &res);
-  if (rv != 0) {
-    dief("getaddrinfo", gai_strerror(rv));
-  }
-  for (rp = res; rp; rp = rp->ai_next) {
-    fd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
-    if (fd == -1) {
-      continue;
-    }
-    while ((rv = connect(fd, rp->ai_addr, rp->ai_addrlen)) == -1 &&
-           errno == EINTR)
-      ;
-    if (rv == 0) {
-      break;
-    }
-    close(fd);
-    fd = -1;
-  }
-  freeaddrinfo(res);
-  return fd;
-}
-
-static void make_non_block(int fd) {
-  int flags, rv;
-  while ((flags = fcntl(fd, F_GETFL, 0)) == -1 && errno == EINTR)
-    ;
-  if (flags == -1) {
-    dief("fcntl", strerror(errno));
-  }
-  while ((rv = fcntl(fd, F_SETFL, flags | O_NONBLOCK)) == -1 && errno == EINTR)
-    ;
-  if (rv == -1) {
-    dief("fcntl", strerror(errno));
-  }
-}
-
-static void set_tcp_nodelay(int fd) {
-  int val = 1;
-  int rv;
-  rv = setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &val, (socklen_t)sizeof(val));
-  if (rv == -1) {
-    dief("setsockopt", strerror(errno));
-  }
-}
-
-/*
  * Update |pollfd| based on the state of |connection|.
  */
 static void ctl_poll(struct pollfd *pollfd, struct Connection *connection) {
@@ -508,7 +377,7 @@ static void request_free(struct Request *req) {
 /*
  * Fetches the resource denoted by |uri|.
  */
-static void fetch_uri(const struct URI *uri) {
+void fetch_uri(const struct URI *uri) {
   nghttp2_session_callbacks *callbacks;
   int fd;
   SSL_CTX *ssl_ctx;
@@ -602,7 +471,7 @@ static void fetch_uri(const struct URI *uri) {
   request_free(&req);
 }
 
-static int parse_uri(struct URI *res, const char *uri) {
+int parse_uri(struct URI *res, const char *uri) {
   /* We only interested in https */
   size_t len, i, offset;
   int ipv6addr = 0;
@@ -684,26 +553,3 @@ static int parse_uri(struct URI *res, const char *uri) {
   return 0;
 }
 
-int main(int argc, char **argv) {
-  struct URI uri;
-  struct sigaction act;
-  int rv;
-
-  if (argc < 2) {
-    die("Specify a https URI");
-  }
-
-  memset(&act, 0, sizeof(struct sigaction));
-  act.sa_handler = SIG_IGN;
-  sigaction(SIGPIPE, &act, 0);
-
-  SSL_load_error_strings();
-  SSL_library_init();
-
-  rv = parse_uri(&uri, argv[1]);
-  if (rv != 0) {
-    die("parse_uri failed");
-  }
-  fetch_uri(&uri);
-  return EXIT_SUCCESS;
-}
