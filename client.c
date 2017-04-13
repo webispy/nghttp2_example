@@ -299,7 +299,7 @@ static void submit_request(struct Connection *connection, struct Request *req)
 /*
  * Performs the network I/O.
  */
-static void exec_io(struct Connection *connection)
+static int exec_io(struct Connection *connection)
 {
   int rv;
 
@@ -308,7 +308,7 @@ static void exec_io(struct Connection *connection)
     fprintf(stderr,
         "nghttp2_session_recv: error_code=%d, msg=%s\n", rv,
         nghttp2_strerror(rv));
-    return;
+    return -1;
   }
 
   rv = nghttp2_session_send(connection->session);
@@ -316,8 +316,10 @@ static void exec_io(struct Connection *connection)
     fprintf(stderr,
         "nghttp2_session_send: error_code=%d, msg=%s\n", rv,
         nghttp2_strerror(rv));
-    return;
+    return -1;
   }
+
+  return 0;
 }
 
 static void request_init(struct Request *req, const struct URI *uri)
@@ -397,8 +399,10 @@ void fetch_uri(const struct URI *uri) {
       break;
     }
 
-    if (pollfds[0].revents & (POLLIN | POLLOUT))
-      exec_io(&connection);
+    if (pollfds[0].revents & (POLLIN | POLLOUT)) {
+      if (exec_io(&connection) < 0)
+          break;
+    }
 
     if ((pollfds[0].revents & POLLHUP) || (pollfds[0].revents & POLLERR)) {
       fprintf(stderr, "Connection error\n");
