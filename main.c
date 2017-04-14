@@ -7,12 +7,16 @@
 #include <openssl/err.h>
 #include <openssl/conf.h>
 
+#include <glib.h>
+
 #include "verbose.h"
 #include "client.h"
+#include "http2.h"
 
 int main(int argc, char **argv)
 {
-  struct URI uri;
+  GMainLoop *mainloop;
+  HTTP2Uri *uri;
   struct sigaction act;
   int rv;
   int i;
@@ -31,14 +35,17 @@ int main(int argc, char **argv)
 
   for (i = 1; i < argc; i++) {
     printf("Try %s\n", argv[i]);
-    rv = parse_uri(&uri, argv[i]);
-    if (rv != 0) {
+    uri = http2_uri_parse(argv[i]);
+    if (!uri) {
       fprintf(stderr, "parse_uri failed\n");
       exit(EXIT_FAILURE);
     }
 
-    fetch_uri(&uri);
+    fetch_uri(uri);
   }
+
+  mainloop = g_main_loop_new(NULL, FALSE);
+  g_main_loop_run(mainloop);
 
   return EXIT_SUCCESS;
 }

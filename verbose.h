@@ -23,7 +23,7 @@
 #define ANSI_COLOR_LIGHTCYAN    "\e[1;36m"
 #define ANSI_COLOR_WHITE        "\e[1;37m"
 
-#define dbg(fmt, args...) printf(ANSI_COLOR_GRAY "<%s:%d> " ANSI_COLOR_NORMAL fmt "\n", __FILE__, __LINE__, ## args)
+#define dbg(fmt, args...) printf(ANSI_COLOR_DARKGRAY "<%s:%d> " ANSI_COLOR_NORMAL fmt "\n", __FILE__, __LINE__, ## args)
 #define info(fmt, args...) printf(fmt "\n", ## args)
 #define send_info(fmt, args...) printf(ANSI_COLOR_MAGENTA "send " fmt ANSI_COLOR_NORMAL "\n", ## args)
 #define recv_info(fmt, args...) printf(ANSI_COLOR_CYAN "recv " fmt ANSI_COLOR_NORMAL "\n", ## args)

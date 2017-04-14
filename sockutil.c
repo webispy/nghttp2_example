@@ -13,7 +13,9 @@
 #include <openssl/err.h>
 #include <openssl/conf.h>
 
+#include "client.h"
 #include "sockutil.h"
+#include "verbose.h"
 
 /*
  * Callback function for TLS NPN. Since this program only supports
@@ -21,12 +23,13 @@
  * library supports, we terminate program.
  */
 static int select_next_proto_cb(SSL *ssl, unsigned char **out,
-                                unsigned char *outlen, const unsigned char *in,
-                                unsigned int inlen, void *arg) {
+    unsigned char *outlen, const unsigned char *in,
+    unsigned int inlen, void *arg)
+{
   int rv;
 
   /* nghttp2_select_next_protocol() selects HTTP/2 protocol the
-     nghttp2 library supports. */
+   nghttp2 library supports. */
   rv = nghttp2_select_next_protocol(out, outlen, in, inlen);
   if (rv <= 0) {
     fprintf(stderr, "Server did not advertise HTTP/2 protocol\n");
@@ -39,7 +42,8 @@ static int select_next_proto_cb(SSL *ssl, unsigned char **out,
 /*
  * Setup SSL/TLS context.
  */
-static void init_ssl_ctx(SSL_CTX *ssl_ctx) {
+static void init_ssl_ctx(SSL_CTX *ssl_ctx)
+{
   /* Disable SSLv2 and enable all workarounds for buggy servers */
   SSL_CTX_set_options(ssl_ctx, SSL_OP_ALL | SSL_OP_NO_SSLv2);
   SSL_CTX_set_mode(ssl_ctx, SSL_MODE_AUTO_RETRY);
@@ -49,11 +53,13 @@ static void init_ssl_ctx(SSL_CTX *ssl_ctx) {
   SSL_CTX_set_next_proto_select_cb(ssl_ctx, select_next_proto_cb, NULL);
 }
 
-static int ssl_handshake(SSL *ssl, int fd) {
+static int ssl_handshake(SSL *ssl, int fd)
+{
   int rv;
 
   if (SSL_set_fd(ssl, fd) == 0) {
-    fprintf(stderr, "SSL_set_fd: %s\n", ERR_error_string(ERR_get_error(), NULL));
+    fprintf(stderr, "SSL_set_fd: %s\n",
+        ERR_error_string(ERR_get_error(), NULL));
     return -1;
   }
 
@@ -61,7 +67,8 @@ static int ssl_handshake(SSL *ssl, int fd) {
 
   rv = SSL_connect(ssl);
   if (rv <= 0) {
-    fprintf(stderr, "SSL_connect: %s\n", ERR_error_string(ERR_get_error(), NULL));
+    fprintf(stderr, "SSL_connect: %s\n",
+        ERR_error_string(ERR_get_error(), NULL));
     return -1;
   }
 
@@ -72,7 +79,8 @@ static int ssl_handshake(SSL *ssl, int fd) {
  * Connects to the host |host| and port |port|.  This function returns
  * the file descriptor of the client socket.
  */
-static int connect_to(const char *host, uint16_t port) {
+static int connect_to(const char *host, uint16_t port)
+{
   struct addrinfo hints;
   int fd = -1;
   int rv;
@@ -96,7 +104,7 @@ static int connect_to(const char *host, uint16_t port) {
       continue;
 
     while ((rv = connect(fd, rp->ai_addr, rp->ai_addrlen)) == -1 &&
-           errno == EINTR)
+    errno == EINTR)
       ;
 
     if (rv == 0)
@@ -111,7 +119,8 @@ static int connect_to(const char *host, uint16_t port) {
   return fd;
 }
 
-static int make_non_block(int fd) {
+static int make_non_block(int fd)
+{
   int flags, rv;
 
   while ((flags = fcntl(fd, F_GETFL, 0)) == -1 && errno == EINTR)
@@ -133,11 +142,12 @@ static int make_non_block(int fd) {
   return 0;
 }
 
-static int set_tcp_nodelay(int fd) {
+static int set_tcp_nodelay(int fd)
+{
   int val = 1;
   int rv;
 
-  rv = setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &val, (socklen_t)sizeof(val));
+  rv = setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &val, (socklen_t) sizeof(val));
   if (rv == -1) {
     fprintf(stderr, "setsockopt: %s\n", strerror(errno));
     return -1;
@@ -146,15 +156,33 @@ static int set_tcp_nodelay(int fd) {
   return 0;
 }
 
-struct SSLConnection *sockutil_setup_connection(const char *host, uint16_t port)
+static void request_init(struct Request *req, HTTP2Uri *uri)
+{
+  req->uri = uri;
+  req->stream_id = -1;
+}
+
+static void request_free(struct Request *req)
+{
+  http2_uri_free(req->uri);
+  req->uri = NULL;
+}
+
+struct SSLConnection *sockutil_setup_connection(HTTP2Uri *uri)
 {
   struct SSLConnection *conn = NULL;
+  struct Request *req;
   SSL_CTX *ssl_ctx = NULL;
   SSL *ssl = NULL;
   int fd = -1;
 
+  req = calloc(1, sizeof(struct Request));
+  request_init(req, uri);
+
+  dbg("%s, %d", uri->host, uri->port);
+
   /* Establish connection and setup SSL */
-  fd = connect_to(host, port);
+  fd = connect_to(uri->host, uri->port);
   if (fd == -1) {
     fprintf(stderr, "Could not open file descriptor\n");
     goto ERROR_RETURN;
@@ -188,16 +216,23 @@ struct SSLConnection *sockutil_setup_connection(const char *host, uint16_t port)
   conn->fd = fd;
   conn->ssl_ctx = ssl_ctx;
   conn->ssl = ssl;
+  conn->req = req;
 
   return conn;
 
 ERROR_RETURN:
+  if (req) {
+    request_free(req);
+  }
+
   if (ssl) {
     SSL_shutdown(ssl);
     SSL_free(ssl);
   }
+
   if (ssl_ctx)
     SSL_CTX_free(ssl_ctx);
+
   if (fd >= 0) {
     shutdown(fd, SHUT_WR);
     close(fd);
@@ -211,17 +246,31 @@ void sockutil_destroy_connection(struct SSLConnection *conn)
   if (!conn)
     return;
 
+  if (conn->session) {
+    nghttp2_session_del(conn->session);
+    conn->session = NULL;
+  }
+
+  if (conn->req) {
+    request_free(conn->req);
+    conn->req = NULL;
+  }
+
   if (conn->ssl) {
     SSL_shutdown(conn->ssl);
     SSL_free(conn->ssl);
+    conn->ssl = NULL;
   }
 
-  if (conn->ssl_ctx)
+  if (conn->ssl_ctx) {
     SSL_CTX_free(conn->ssl_ctx);
+    conn->ssl_ctx = NULL;
+  }
 
-  if (conn->fd) {
+  if (conn->fd >= 0) {
     shutdown(conn->fd, SHUT_WR);
     close(conn->fd);
+    conn->fd = -1;
   }
 
   free(conn);

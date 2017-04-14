@@ -41,6 +41,8 @@
 #include <openssl/err.h>
 #include <openssl/conf.h>
 
+#include <glib.h>
+
 #include "client.h"
 #include "sockutil.h"
 #include "verbose.h"
@@ -59,30 +61,6 @@ enum { IO_NONE, WANT_READ, WANT_WRITE };
         NGHTTP2_NV_FLAG_NONE                                                   \
   }
 
-struct Connection {
-  SSL *ssl;
-  nghttp2_session *session;
-  /* WANT_READ if SSL/TLS connection needs more input; or WANT_WRITE
-     if it needs more output; or IO_NONE. This is necessary because
-     SSL/TLS re-negotiation is possible at any time. nghttp2 API
-     offers similar functions like nghttp2_session_want_read() and
-     nghttp2_session_want_write() but they do not take into account
-     SSL/TSL connection. */
-  int want_io;
-};
-
-/*
- * Returns copy of string |s| with the length |len|. The returned
- * string is NULL-terminated.
- */
-static char *strcopy(const char *s, size_t len) {
-  char *dst;
-  dst = malloc(len + 1);
-  memcpy(dst, s, len);
-  dst[len] = '\0';
-  return dst;
-}
-
 /*
  * The implementation of nghttp2_send_callback type. Here we write
  * |data| with size |length| to the network and return the number of
@@ -92,10 +70,10 @@ static char *strcopy(const char *s, size_t len) {
 static ssize_t send_callback(nghttp2_session *session, const uint8_t *data,
     size_t length, int flags, void *user_data)
 {
-  struct Connection *connection;
+  struct SSLConnection *connection;
   int rv;
 
-  connection = (struct Connection *) user_data;
+  connection = (struct SSLConnection *) user_data;
   connection->want_io = IO_NONE;
   ERR_clear_error();
 
@@ -124,10 +102,10 @@ static ssize_t send_callback(nghttp2_session *session, const uint8_t *data,
 static ssize_t recv_callback(nghttp2_session *session, uint8_t *buf,
     size_t length, int flags, void *user_data)
 {
-  struct Connection *connection;
+  struct SSLConnection *connection;
   int rv;
 
-  connection = (struct Connection *) user_data;
+  connection = (struct SSLConnection *) user_data;
   connection->want_io = IO_NONE;
   ERR_clear_error();
 
@@ -249,10 +227,11 @@ static void setup_nghttp2_callbacks(nghttp2_session_callbacks *callbacks)
       on_header_callback);
 }
 
+#if 0
 /*
  * Update |pollfd| based on the state of |connection|.
  */
-static void ctl_poll(struct pollfd *pollfd, struct Connection *connection)
+static void ctl_poll(struct pollfd *pollfd, struct SSLConnection *connection)
 {
   pollfd->events = 0;
 
@@ -266,25 +245,26 @@ static void ctl_poll(struct pollfd *pollfd, struct Connection *connection)
     pollfd->events |= POLLOUT;
   }
 }
+#endif
 
 /*
  * Submits the request |req| to the connection |connection|.  This
  * function does not send packets; just append the request to the
  * internal queue in |connection->session|.
  */
-static void submit_request(struct Connection *connection, struct Request *req)
+static void submit_request(struct SSLConnection *connection)
 {
   int32_t stream_id;
   /* Make sure that the last item is NULL */
   const nghttp2_nv nva[] = { MAKE_NV(":method", "GET"),
-      MAKE_NV_CS(":path", req->path),
+      MAKE_NV_CS(":path", connection->req->uri->path),
       MAKE_NV(":scheme", "https"),
-      MAKE_NV_CS(":authority", req->hostport),
+      MAKE_NV_CS(":authority", connection->req->uri->portstr),
       MAKE_NV("accept", "*/*"),
       MAKE_NV("user-agent", "nghttp2/" NGHTTP2_VERSION) };
 
   stream_id = nghttp2_submit_request(connection->session, NULL, nva,
-      sizeof(nva) / sizeof(nva[0]), NULL, req);
+      sizeof(nva) / sizeof(nva[0]), NULL, connection->req);
   if (stream_id < 0) {
     fprintf(stderr,
         "nghttp2_submit_request: error_code=%d, msg=%s\n", stream_id,
@@ -292,14 +272,14 @@ static void submit_request(struct Connection *connection, struct Request *req)
     return;
   }
 
-  req->stream_id = stream_id;
+  connection->req->stream_id = stream_id;
   printf("[INFO] Stream ID = %d\n", stream_id);
 }
 
 /*
  * Performs the network I/O.
  */
-static int exec_io(struct Connection *connection)
+static int exec_io(struct SSLConnection *connection)
 {
   int rv;
 
@@ -322,43 +302,57 @@ static int exec_io(struct Connection *connection)
   return 0;
 }
 
-static void request_init(struct Request *req, const struct URI *uri)
+static guint add_watch(int fd, GIOFunc func, gpointer user_data,
+    GDestroyNotify destroy_func)
 {
-  req->host = strcopy(uri->host, uri->hostlen);
-  req->port = uri->port;
-  req->path = strcopy(uri->path, uri->pathlen);
-  req->hostport = strcopy(uri->hostport, uri->hostportlen);
-  req->stream_id = -1;
+  GIOChannel *channel;
+  GIOCondition cond = 0;
+  guint src;
+
+  cond = G_IO_IN | G_IO_OUT | G_IO_PRI | G_IO_ERR | G_IO_HUP | G_IO_NVAL;
+
+  channel = g_io_channel_unix_new(fd);
+  src = g_io_add_watch_full(channel, G_PRIORITY_HIGH, cond, func, user_data,
+      destroy_func);
+  g_io_channel_set_flags(channel, G_IO_FLAG_NONBLOCK, NULL);
+  g_io_channel_unref(channel);
+
+  return src;
 }
 
-static void request_free(struct Request *req)
+static gboolean on_fd_watch(GIOChannel *channel, GIOCondition cond,
+    gpointer user_data)
 {
-  free(req->host);
-  free(req->path);
-  free(req->hostport);
+  if (exec_io(user_data) < 0)
+    return FALSE;
+
+  return TRUE;
+}
+
+static void on_fd_watch_destroy(gpointer user_data)
+{
+  struct SSLConnection *conn = user_data;
+  dbg("destroy");
+
+  if (conn)
+    sockutil_destroy_connection(conn);
 }
 
 /*
  * Fetches the resource denoted by |uri|.
  */
-void fetch_uri(const struct URI *uri) {
+void fetch_uri(HTTP2Uri *uri) {
   nghttp2_session_callbacks *callbacks;
-  struct Request req;
-  struct Connection connection = { NULL, NULL, IO_NONE };
   int rv;
   nfds_t npollfds = 1;
   struct pollfd pollfds[1];
   struct SSLConnection *ssl_conn;
 
-  request_init(&req, uri);
-
-  ssl_conn = sockutil_setup_connection(req.host, req.port);
+  ssl_conn = sockutil_setup_connection(uri);
   if (!ssl_conn) {
     fprintf(stderr, "socket setup failed\n");
     goto END;
   }
-
-  connection.ssl = ssl_conn->ssl;
 
   rv = nghttp2_session_callbacks_new(&callbacks);
   if (rv != 0) {
@@ -369,7 +363,7 @@ void fetch_uri(const struct URI *uri) {
 
   setup_nghttp2_callbacks(callbacks);
 
-  rv = nghttp2_session_client_new(&connection.session, callbacks, &connection);
+  rv = nghttp2_session_client_new(&(ssl_conn->session), callbacks, ssl_conn);
   if (rv != 0) {
     fprintf(stderr, "nghttp2_session_client_new: error_code=%d, msg=%s\n", rv,
         nghttp2_strerror(rv));
@@ -378,15 +372,17 @@ void fetch_uri(const struct URI *uri) {
 
   nghttp2_session_callbacks_del(callbacks);
 
-  rv = nghttp2_submit_settings(connection.session, NGHTTP2_FLAG_NONE, NULL, 0);
+  rv = nghttp2_submit_settings(ssl_conn->session, NGHTTP2_FLAG_NONE, NULL, 0);
   if (rv != 0) {
     fprintf(stderr, "nghttp2_submit_settings: %d", rv);
     goto END;
   }
 
   /* Submit the HTTP request to the outbound queue. */
-  submit_request(&connection, &req);
+  submit_request(ssl_conn);
 
+  add_watch(ssl_conn->fd, on_fd_watch, ssl_conn, on_fd_watch_destroy);
+#if 0
   pollfds[0].fd = ssl_conn->fd;
   ctl_poll(pollfds, &connection);
 
@@ -411,108 +407,11 @@ void fetch_uri(const struct URI *uri) {
 
     ctl_poll(pollfds, &connection);
   }
+#endif
+  return;
 
 END:
-  /* Resource cleanup */
-  if (connection.session)
-    nghttp2_session_del(connection.session);
-
   if (ssl_conn)
     sockutil_destroy_connection(ssl_conn);
 
-  request_free(&req);
 }
-
-int parse_uri(struct URI *res, const char *uri)
-{
-  /* We only interested in https */
-  size_t len, i, offset;
-  int ipv6addr = 0;
-
-  memset(res, 0, sizeof(struct URI));
-  len = strlen(uri);
-  if (len < 9 || memcmp("https://", uri, 8) != 0) {
-    return -1;
-  }
-  offset = 8;
-  res->host = res->hostport = &uri[offset];
-  res->hostlen = 0;
-
-  if (uri[offset] == '[') {
-    /* IPv6 literal address */
-    ++offset;
-    ++res->host;
-    ipv6addr = 1;
-    for (i = offset; i < len; ++i) {
-      if (uri[i] == ']') {
-        res->hostlen = i - offset;
-        offset = i + 1;
-        break;
-      }
-    }
-  }
-  else {
-    const char delims[] = ":/?#";
-    for (i = offset; i < len; ++i) {
-      if (strchr(delims, uri[i]) != NULL) {
-        break;
-      }
-    }
-    res->hostlen = i - offset;
-    offset = i;
-  }
-
-  if (res->hostlen == 0) {
-    return -1;
-  }
-
-  /* Assuming https */
-  res->port = 443;
-  if (offset < len) {
-    if (uri[offset] == ':') {
-      /* port */
-      const char delims[] = "/?#";
-      int port = 0;
-      ++offset;
-      for (i = offset; i < len; ++i) {
-        if (strchr(delims, uri[i]) != NULL) {
-          break;
-        }
-        if ('0' <= uri[i] && uri[i] <= '9') {
-          port *= 10;
-          port += uri[i] - '0';
-          if (port > 65535) {
-            return -1;
-          }
-        }
-        else {
-          return -1;
-        }
-      }
-      if (port == 0) {
-        return -1;
-      }
-      offset = i;
-      res->port = (uint16_t) port;
-    }
-  }
-
-  res->hostportlen = (size_t) (uri + offset + ipv6addr - res->host);
-  for (i = offset; i < len; ++i) {
-    if (uri[i] == '#') {
-      break;
-    }
-  }
-
-  if (i - offset == 0) {
-    res->path = "/";
-    res->pathlen = 1;
-  }
-  else {
-    res->path = &uri[offset];
-    res->pathlen = i - offset;
-  }
-
-  return 0;
-}
-
