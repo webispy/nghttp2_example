@@ -2,6 +2,16 @@
 
 #include "verbose.h"
 
+#define send_info(fmt, args...) printf(ANSI_COLOR_MAGENTA "send " fmt ANSI_COLOR_NORMAL "\n", ## args)
+#define recv_info(fmt, args...) printf(ANSI_COLOR_CYAN "recv " fmt ANSI_COLOR_NORMAL "\n", ## args)
+
+#define show_send_stream_id(sid) printf("[" ANSI_COLOR_YELLOW "stream %02d " ANSI_COLOR_LIGHTMAGENTA "SEND" ANSI_COLOR_NORMAL "] ", sid);
+#define show_recv_stream_id(sid) printf("[" ANSI_COLOR_YELLOW "stream %02d " ANSI_COLOR_LIGHTCYAN "RECV" ANSI_COLOR_NORMAL "] ", sid);
+#define show_stream_id(sid) printf("[" ANSI_COLOR_YELLOW "stream %02d " ANSI_COLOR_NORMAL "----] ", sid);
+#define show_frame(type, fmt, args...) printf("frame-type=%d(" ANSI_COLOR_LIGHTBLUE "%s" ANSI_COLOR_NORMAL ")" fmt "\n", type, types[type], ## args)
+
+enum { DIR_SEND, DIR_RECV };
+
 static const char *types[255] = {
   "DATA",
   "HEADERS",
@@ -27,44 +37,63 @@ static const char *setting_ids[] = {
 
 static void _log_flag(int type, uint8_t flag)
 {
+  int comma = 0;
   if (flag == 0)
     return;
 
-  printf("\t; flags=");
+  printf("\t; flags=0x%02X (", flag);
 
   switch (type) {
   case NGHTTP2_DATA:
-    if (flag & NGHTTP2_FLAG_END_STREAM) // 1
-      printf("END_STREAM ");
-    if (flag & NGHTTP2_FLAG_PADDED) // 8
+    if (flag & NGHTTP2_FLAG_END_STREAM) { // 1
+      printf("END_STREAM");
+      comma = 1;
+    }
+    if (flag & NGHTTP2_FLAG_PADDED) { // 8
+      if (comma) printf(", ");
       printf("PADDED");
+    }
     break;
   case NGHTTP2_HEADERS:
-    if (flag & NGHTTP2_FLAG_END_STREAM) // 1
-      printf("END_STREAM ");
-    if (flag & NGHTTP2_FLAG_END_HEADERS) // 4;
-      printf("END_HEADERS ");
-    if (flag & NGHTTP2_FLAG_PADDED) // 8
+    if (flag & NGHTTP2_FLAG_END_STREAM) { // 1
+      printf("END_STREAM");
+      comma = 1;
+    }
+    if (flag & NGHTTP2_FLAG_END_HEADERS) { // 4;
+      if (comma) printf(", ");
+      printf("END_HEADERS");
+      comma = 1;
+    }
+    if (flag & NGHTTP2_FLAG_PADDED) { // 8
+      if (comma) printf(", ");
       printf("PADDED");
-    if (flag & NGHTTP2_FLAG_PRIORITY) // 20
+      comma = 1;
+    }
+    if (flag & NGHTTP2_FLAG_PRIORITY) { // 20
+      if (comma) printf(", ");
       printf("PRIORITY");
+    }
     break;
   case NGHTTP2_SETTINGS:
     case NGHTTP2_PING:
     if (flag & NGHTTP2_FLAG_ACK) // 1
-      printf("ACK ");
+      printf("ACK");
     break;
   case NGHTTP2_PUSH_PROMISE:
-    if (flag & NGHTTP2_FLAG_END_HEADERS) // 4;
-      printf("END_HEADERS ");
-    if (flag & NGHTTP2_FLAG_PADDED) // 8
+    if (flag & NGHTTP2_FLAG_END_HEADERS) { // 4;
+      printf("END_HEADERS");
+      comma = 1;
+    }
+    if (flag & NGHTTP2_FLAG_PADDED) { // 8
+      if (comma) printf(", ");
       printf("PADDED");
+    }
     break;
   default:
     break;
   }
 
-  printf("\n");
+  printf(")\n");
 }
 
 static void _log_headers(nghttp2_session *session,
@@ -74,18 +103,20 @@ static void _log_headers(nghttp2_session *session,
   size_t i;
   const nghttp2_nv *nva;
 
+  printf("\t; category=%d (", headers->cat);
   if (headers->cat == NGHTTP2_HCAT_RESPONSE) {
-    info("\t; category=RESPONSE (First response header)");
+    printf("RESPONSE - First response header");
   }
   else if (headers->cat == NGHTTP2_HCAT_REQUEST) {
-    info("\t; category=REQUEST (Open new stream)");
+    printf("REQUEST - Open new stream");
   }
   else if (headers->cat == NGHTTP2_HCAT_PUSH_RESPONSE) {
-    info("\t; category=PUSH_RESPONSE (First push response header)");
+    printf("PUSH_RESPONSE - First push response header");
   }
   else if (headers->cat == NGHTTP2_HCAT_HEADERS) {
-    info("\t; category=HEADERS");
+    printf("HEADERS");
   }
+  printf(")\n");
 
   if (headers->hd.flags & NGHTTP2_FLAG_PRIORITY)
     info("\t; priority_spec=<stream_id=%d, weight=%d, exclusive=%d>",
@@ -151,20 +182,18 @@ static void _log_push_promise(const nghttp2_push_promise *push_promise)
   }
 }
 
-void verbose_frame(int dir, nghttp2_session *session, const nghttp2_frame *frame)
+static void verbose_frame(int dir, nghttp2_session *session,
+    const nghttp2_frame *frame)
 {
   if (dir == DIR_SEND) {
-    send_info("%s <length=%zu, stream_id=%d, type=%d, flags=0x%02X>",
-        types[frame->hd.type], frame->hd.length, frame->hd.stream_id,
-        frame->hd.type, frame->hd.flags);
-    _log_flag(frame->hd.type, frame->hd.flags);
+    show_send_stream_id(frame->hd.stream_id);
   }
   else {
-    recv_info("%s <length=%zu, stream_id=%d, type=%d, flags=0x%02X>",
-        types[frame->hd.type], frame->hd.length, frame->hd.stream_id,
-        frame->hd.type, frame->hd.flags);
-    _log_flag(frame->hd.type, frame->hd.flags);
+    show_recv_stream_id(frame->hd.stream_id);
   }
+
+  show_frame(frame->hd.type, ", payload-length=%zu", frame->hd.length);
+  _log_flag(frame->hd.type, frame->hd.flags);
 
   switch (frame->hd.type) {
   case NGHTTP2_DATA:
@@ -200,13 +229,34 @@ void verbose_frame(int dir, nghttp2_session *session, const nghttp2_frame *frame
   }
 }
 
+
+void verbose_recv_frame(nghttp2_session *session,
+    const nghttp2_frame *frame)
+{
+  verbose_frame(DIR_RECV, session, frame);
+}
+
+void verbose_send_frame(nghttp2_session *session,
+    const nghttp2_frame *frame)
+{
+  verbose_frame(DIR_SEND, session, frame);
+}
+
 void verbose_header(nghttp2_session *session, const nghttp2_frame *frame,
     const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen,
     uint8_t flags, void *user_data)
 {
-  printf("header (stream_id=%d) ", frame->hd.stream_id);
+  show_stream_id(frame->hd.stream_id);
+  printf("header ");
   fwrite(name, 1, namelen, stdout);
   printf(": ");
   fwrite(value, 1, valuelen, stdout);
   printf("\n");
+}
+
+void verbose_datachunk(nghttp2_session *session, uint8_t flags,
+    int32_t stream_id, size_t len)
+{
+  show_recv_stream_id(stream_id);
+  recv_info("DATA chunk <length=%zu, flags=0x%02x>", len, flags);
 }

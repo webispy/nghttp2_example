@@ -9,9 +9,12 @@ pkg_check_modules(pkgs REQUIRED
   libnghttp2
 )
 
-SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Werror -g -Wall -Wextra -fPIC -fdata-sections -ffunction-sections -Wl,--gc-sections")
-SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wswitch-default -Wunreachable-code -Wpointer-arith -Waggregate-return -Wconversion")
-SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-unused-parameter -Wno-missing-field-initializers -Wdeclaration-after-statement -Wcast-align")
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Werror -g -Wall -Wextra -fPIC -fdata-sections -ffunction-sections -Wl,--gc-sections")
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wswitch-default -Wunreachable-code -Wpointer-arith -Waggregate-return -Wconversion")
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-unused-parameter -Wno-missing-field-initializers -Wdeclaration-after-statement -Wcast-align")
+
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${EXTRA_CFLAGS} -O2 -fPIE")
+set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--no-as-needed -pie")
 
 add_definitions("-DNGHTTP2_NORETURN=")
 

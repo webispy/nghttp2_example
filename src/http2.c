@@ -256,7 +256,7 @@ static ssize_t recv_callback(nghttp2_session *session, uint8_t *buf,
 static int on_frame_send_callback(nghttp2_session *session,
     const nghttp2_frame *frame, void *user_data)
 {
-  verbose_frame(DIR_SEND, session, frame);
+  verbose_send_frame(session, frame);
 
   return 0;
 }
@@ -264,7 +264,7 @@ static int on_frame_send_callback(nghttp2_session *session,
 static int on_frame_recv_callback(nghttp2_session *session,
     const nghttp2_frame *frame, void *user_data)
 {
-  verbose_frame(DIR_RECV, session, frame);
+  verbose_recv_frame(session, frame);
 
   return 0;
 }
@@ -315,8 +315,8 @@ static int on_data_chunk_recv_callback(nghttp2_session *session, uint8_t flags,
     int32_t stream_id, const uint8_t *data,
     size_t len, void *user_data)
 {
-  recv_info("DATA chunk <length=%zu, flags=0x%02x, stream_id=%d>", len, flags,
-      stream_id);
+  verbose_datachunk(session, flags, stream_id, len);
+
   printf("\t");
   fwrite(data, 1, len, stdout);
   printf("\n");
@@ -647,6 +647,8 @@ int ghttp2_request(GHTTP2 *obj, const char *orig_uri)
   req = _request_new(obj, orig_uri);
   if (!req)
     return -1;
+
+  obj->reqs = g_list_append(obj->reqs, req);
 
   req->stream_id = nghttp2_submit_request(obj->session, NULL, nva,
       sizeof(nva) / sizeof(nva[0]), NULL, req);

@@ -25,14 +25,12 @@
 
 #define dbg(fmt, args...) printf(ANSI_COLOR_DARKGRAY "<%s:%d> " ANSI_COLOR_NORMAL fmt "\n", __FILE__, __LINE__, ## args)
 #define info(fmt, args...) printf(fmt "\n", ## args)
-#define send_info(fmt, args...) printf(ANSI_COLOR_MAGENTA "send " fmt ANSI_COLOR_NORMAL "\n", ## args)
-#define recv_info(fmt, args...) printf(ANSI_COLOR_CYAN "recv " fmt ANSI_COLOR_NORMAL "\n", ## args)
 
-enum { DIR_SEND, DIR_RECV };
-
-void verbose_frame(int dir, nghttp2_session *session, const nghttp2_frame *frame);
+void verbose_recv_frame(nghttp2_session *session, const nghttp2_frame *frame);
+void verbose_send_frame(nghttp2_session *session, const nghttp2_frame *frame);
 void verbose_header(nghttp2_session *session, const nghttp2_frame *frame,
     const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen,
     uint8_t flags, void *user_data);
+void verbose_datachunk(nghttp2_session *session, uint8_t flags, int32_t stream_id, size_t len);
 
 #endif
