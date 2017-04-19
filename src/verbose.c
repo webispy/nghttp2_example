@@ -60,6 +60,8 @@ static void _log_flag(int type, uint8_t flag)
     if (flag & NGHTTP2_FLAG_PADDED) // 8
       printf("PADDED");
     break;
+  default:
+    break;
   }
 
   printf("\n");
@@ -70,6 +72,7 @@ static void _log_headers(nghttp2_session *session,
 {
   struct Request *req;
   size_t i;
+  const nghttp2_nv *nva;
 
   if (headers->cat == NGHTTP2_HCAT_RESPONSE) {
     info("\t; category=RESPONSE (First response header)");
@@ -98,7 +101,7 @@ static void _log_headers(nghttp2_session *session,
 
   info("\t; name/value length=%zu", headers->nvlen);
 
-  const nghttp2_nv *nva = headers->nva;
+  nva = headers->nva;
   for (i = 0; i < headers->nvlen; ++i) {
     printf("\t[%zu] ", i);
     fwrite(nva[i].name, 1, nva[i].namelen, stdout);
@@ -132,11 +135,13 @@ static void _log_goaway(const nghttp2_goaway *goaway)
 static void _log_push_promise(const nghttp2_push_promise *push_promise)
 {
   size_t i;
+  const nghttp2_nv *nva;
 
   info("\t; promised_stream_id=%d, padlen=%zu",
       push_promise->promised_stream_id, push_promise->padlen);
   info("\t; name/value length=%zu", push_promise->nvlen);
-  const nghttp2_nv *nva = push_promise->nva;
+
+  nva = push_promise->nva;
   for (i = 0; i < push_promise->nvlen; ++i) {
     printf("\t[%zu] ", i);
     fwrite(nva[i].name, 1, nva[i].namelen, stdout);

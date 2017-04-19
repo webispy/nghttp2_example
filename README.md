@@ -5,7 +5,7 @@ http/2 c client example
 
 ### Install build dependency packages
 ```sh
-apt install libnghttp2-dev libssl-dev cmake
+apt install libnghttp2-dev libssl-dev libhttp-parser-dev cmake
 ```
 
 ### Build

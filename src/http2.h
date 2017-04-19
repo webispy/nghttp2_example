@@ -1,7 +1,7 @@
 #ifndef __HTTP2_H__
 #define __HTTP2_H__
 
-struct _http2_uri {
+struct ghttp2_uri {
   const char *schema;
   const char *host;
   const char *portstr;
@@ -9,20 +9,18 @@ struct _http2_uri {
   const char *query;
   const char *fragment;
   const char *userinfo;
-  int port;
+  uint16_t port;
 };
+typedef struct ghttp2_uri GHTTP2Uri;
 
-struct _http2_req {
-  const char *hostport;
+typedef struct _ghttp2 GHTTP2;
 
-  int stream_id;
+GHTTP2* ghttp2_new();
+void    ghttp2_free(GHTTP2 *obj);
+int     ghttp2_session_init(GHTTP2 *obj, const char *uri);
+int     ghttp2_request(GHTTP2 *obj, const char *uri);
 
-};
-
-typedef struct _http2_uri HTTP2Uri;
-typedef struct _http2_req HTTP2Req;
-
-HTTP2Uri *http2_uri_parse(const char *orig_uri);
-void http2_uri_free(HTTP2Uri *uri);
+GHTTP2Uri* ghttp2_uri_parse(const char *orig_uri);
+void       ghttp2_uri_free(GHTTP2Uri *uri);
 
 #endif

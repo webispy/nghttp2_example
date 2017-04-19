@@ -16,9 +16,8 @@
 int main(int argc, char **argv)
 {
   GMainLoop *mainloop;
-  HTTP2Uri *uri;
+  GHTTP2 *handle;
   struct sigaction act;
-  int rv;
   int i;
 
   if (argc < 2) {
@@ -33,19 +32,21 @@ int main(int argc, char **argv)
   SSL_load_error_strings();
   SSL_library_init();
 
+  handle = ghttp2_new();
+  if (ghttp2_session_init(handle, argv[1]) < 0) {
+    printf("session_init failed\n");
+    return -1;
+  }
+
   for (i = 1; i < argc; i++) {
     printf("Try %s\n", argv[i]);
-    uri = http2_uri_parse(argv[i]);
-    if (!uri) {
-      fprintf(stderr, "parse_uri failed\n");
-      exit(EXIT_FAILURE);
-    }
-
-    fetch_uri(uri);
+    ghttp2_request(handle, argv[i]);
   }
 
   mainloop = g_main_loop_new(NULL, FALSE);
   g_main_loop_run(mainloop);
+
+  ghttp2_free(handle);
 
   return EXIT_SUCCESS;
 }
