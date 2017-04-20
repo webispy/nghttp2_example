@@ -10,13 +10,21 @@
 #include <glib.h>
 
 #include "verbose.h"
-#include "client.h"
 #include "http2.h"
+
+GHTTP2 *handle;
+
+static gboolean do_request(gpointer data)
+{
+  printf("Try %s\n", (char *)data);
+
+  ghttp2_session_request(handle, ghttp2_request_new(data));
+  return FALSE;
+}
 
 int main(int argc, char **argv)
 {
   GMainLoop *mainloop;
-  GHTTP2 *handle;
   struct sigaction act;
   int i;
 
@@ -25,6 +33,8 @@ int main(int argc, char **argv)
     exit(EXIT_FAILURE);
   }
 
+  mainloop = g_main_loop_new(NULL, FALSE);
+
   memset(&act, 0, sizeof(struct sigaction));
   act.sa_handler = SIG_IGN;
   sigaction(SIGPIPE, &act, 0);
@@ -32,21 +42,23 @@ int main(int argc, char **argv)
   SSL_load_error_strings();
   SSL_library_init();
 
-  handle = ghttp2_new();
-  if (ghttp2_session_init(handle, argv[1]) < 0) {
-    printf("session_init failed\n");
+  handle = ghttp2_session_new();
+
+  if (ghttp2_session_connect(handle, argv[1]) < 0) {
+    printf("session_connect failed\n");
     return -1;
   }
 
+  printf("session connected\n");
+
   for (i = 1; i < argc; i++) {
-    printf("Try %s\n", argv[i]);
-    ghttp2_request(handle, argv[i]);
+    printf("add timer %d secons uri '%s'\n", i, argv[i]);
+    g_timeout_add_seconds((guint) i, do_request, argv[i]);
   }
 
-  mainloop = g_main_loop_new(NULL, FALSE);
   g_main_loop_run(mainloop);
 
-  ghttp2_free(handle);
+  ghttp2_session_free(handle);
 
   return EXIT_SUCCESS;
 }

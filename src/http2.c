@@ -25,13 +25,13 @@ enum {
   IO_NONE, WANT_READ, WANT_WRITE
 };
 
-struct ghttp2_req {
+struct _ghttp2_req {
   int stream_id;
   GHTTP2Uri *uri;
+  GHashTable *props;
 
   GHTTP2 *ghttp2;
 };
-typedef struct ghttp2_req GHTTP2Req;
 
 struct _ghttp2 {
   GHTTP2Uri *uri;
@@ -46,6 +46,7 @@ struct _ghttp2 {
   nghttp2_session_callbacks *callbacks;
 
   GList *reqs;
+  guint gsource_id;
 };
 
 static guint _add_watch(int fd, GIOFunc func, gpointer user_data,
@@ -58,7 +59,7 @@ static guint _add_watch(int fd, GIOFunc func, gpointer user_data,
   cond = G_IO_IN | G_IO_OUT | G_IO_PRI | G_IO_ERR | G_IO_HUP | G_IO_NVAL;
 
   channel = g_io_channel_unix_new(fd);
-  src = g_io_add_watch_full(channel, G_PRIORITY_HIGH, cond, func, user_data,
+  src = g_io_add_watch_full(channel, G_PRIORITY_DEFAULT, cond, func, user_data,
       destroy_func);
   g_io_channel_set_flags(channel, G_IO_FLAG_NONBLOCK, NULL);
   g_io_channel_unref(channel);
@@ -291,7 +292,8 @@ static int on_stream_close_callback(nghttp2_session *session, int32_t stream_id,
   GHTTP2Req *req;
   int rv;
 
-  info("stream closed <stream_id=%d>", stream_id);
+  verbose_stream_close(session, stream_id, error_code);
+
   req = nghttp2_session_get_stream_user_data(session, stream_id);
   if (!req)
     return 0;
@@ -330,19 +332,30 @@ static gboolean on_fd_watch(GIOChannel *channel, GIOCondition cond,
   int rv;
   GHTTP2 *obj = user_data;
 
-  rv = nghttp2_session_recv(obj->session);
-  if (rv != 0) {
-    fprintf(stderr,
-        "nghttp2_session_recv: error_code=%d, msg=%s\n", rv,
-        nghttp2_strerror(rv));
-    return FALSE;
-  }
+  //printf("cond=%d\n", cond);
 
-  rv = nghttp2_session_send(obj->session);
-  if (rv != 0) {
-    fprintf(stderr,
-        "nghttp2_session_send: error_code=%d, msg=%s\n", rv,
-        nghttp2_strerror(rv));
+  //if (cond & G_IO_IN) {
+    rv = nghttp2_session_recv(obj->session);
+    if (rv != 0) {
+      fprintf(stderr,
+          "nghttp2_session_recv: error_code=%d, msg=%s\n", rv,
+          nghttp2_strerror(rv));
+      return FALSE;
+    }
+  //}
+
+  //if (cond & G_IO_OUT) {
+    rv = nghttp2_session_send(obj->session);
+    if (rv != 0) {
+      fprintf(stderr,
+          "nghttp2_session_send: error_code=%d, msg=%s\n", rv,
+          nghttp2_strerror(rv));
+      return FALSE;
+    }
+  //}
+
+  if ((cond & G_IO_HUP) || (cond & G_IO_ERR)) {
+    fprintf(stderr, "cond is 0x%X\n", cond);
     return FALSE;
   }
 
@@ -354,8 +367,15 @@ static void on_fd_watch_destroy(gpointer user_data)
   GHTTP2 *obj = user_data;
   dbg("destroy");
 
-  if (obj)
-    _disconnect(obj);
+  if (!obj)
+    return;
+
+  _disconnect(obj);
+
+  if (obj->session) {
+    nghttp2_session_del(obj->session);
+    obj->session = NULL;
+  }
 }
 
 static int on_select_next_proto_cb(SSL *ssl, unsigned char **out,
@@ -375,40 +395,6 @@ static int on_select_next_proto_cb(SSL *ssl, unsigned char **out,
   return SSL_TLSEXT_ERR_OK;
 }
 
-static GHTTP2Req *_request_new(GHTTP2 *obj, const char *orig_uri)
-{
-  GHTTP2Req *req;
-  GHTTP2Uri *uri;
-
-  if (!obj || !orig_uri)
-    return NULL;
-
-  uri = ghttp2_uri_parse(orig_uri);
-  if (!uri)
-    return NULL;
-
-  req = calloc(1, sizeof(GHTTP2Req));
-  req->ghttp2 = obj;
-  req->uri = uri;
-
-  return req;
-}
-
-static void _free_req(gpointer data)
-{
-  GHTTP2Req *req = data;
-
-  if (!req)
-    return;
-
-  if (req->uri)
-    ghttp2_uri_free(req->uri);
-
-  memset(req, 0, sizeof(GHTTP2Req));
-  free(req);
-}
-
-
 GHTTP2Uri *ghttp2_uri_parse(const char *orig_uri)
 {
   GHTTP2Uri *uri = NULL;
@@ -423,6 +409,7 @@ GHTTP2Uri *ghttp2_uri_parse(const char *orig_uri)
     return NULL;
 
   uri = calloc(1, sizeof(GHTTP2Uri));
+  uri->str = g_strdup(orig_uri);
 
 #define FIELD_FILL(uf_field,field,default_value) \
   if (u.field_set & (1 << (uf_field))) { \
@@ -462,9 +449,28 @@ void ghttp2_uri_free(GHTTP2Uri *uri)
   if (!uri)
     return;
 
+  g_free(uri->str);
+
+  if (uri->schema)
+    free(uri->schema);
+  if (uri->host)
+    free(uri->host);
+  if (uri->portstr)
+    free(uri->portstr);
+  if (uri->path)
+    free(uri->path);
+  if (uri->query)
+    free(uri->query);
+  if (uri->fragment)
+    free(uri->fragment);
+  if (uri->userinfo)
+    free(uri->userinfo);
+
+  memset(uri, 0, sizeof(GHTTP2Uri));
+  free(uri);
 }
 
-GHTTP2 *ghttp2_new()
+GHTTP2 *ghttp2_session_new()
 {
   GHTTP2 *obj;
   int ret;
@@ -501,7 +507,8 @@ GHTTP2 *ghttp2_new()
   if (obj->ssl_ctx == NULL) {
     fprintf(stderr, "SSL_CTX_new: %s\n",
         ERR_error_string(ERR_get_error(), NULL));
-    goto ERROR_RETURN;
+    ghttp2_session_free(obj);
+    return NULL;
   }
 
   /* Disable SSLv2 and enable all workarounds for buggy servers */
@@ -515,24 +522,29 @@ GHTTP2 *ghttp2_new()
   obj->ssl = SSL_new(obj->ssl_ctx);
   if (obj->ssl == NULL) {
     fprintf(stderr, "SSL_new: %s\n", ERR_error_string(ERR_get_error(), NULL));
-    goto ERROR_RETURN;
+    ghttp2_session_free(obj);
+    return NULL;
   }
 
   return obj;
-
-ERROR_RETURN:
-  ghttp2_free(obj);
-
-  return NULL;
 }
 
-void ghttp2_free(GHTTP2 *obj)
+void ghttp2_session_free(GHTTP2 *obj)
 {
   if (!obj)
     return;
 
+  if (obj->gsource_id)
+    g_source_remove(obj->gsource_id);
+
+  if (obj->fd != -1)
+    close(obj->fd);
+
   if (obj->callbacks)
     nghttp2_session_callbacks_del(obj->callbacks);
+
+  if (obj->session)
+    nghttp2_session_del(obj->session);
 
   if (obj->ssl) {
     SSL_shutdown(obj->ssl);
@@ -546,21 +558,19 @@ void ghttp2_free(GHTTP2 *obj)
     ghttp2_uri_free(obj->uri);
 
   if (obj->reqs)
-    g_list_free_full(obj->reqs, _free_req);
+    g_list_free_full(obj->reqs, (GDestroyNotify) ghttp2_request_free);
 
   memset(obj, 0, sizeof(GHTTP2));
   free(obj);
 }
 
-int ghttp2_session_init(GHTTP2 *obj, const char *orig_uri)
+int ghttp2_session_connect(GHTTP2 *obj, const char *orig_uri)
 {
   int rv;
   int fd = -1;
 
-  if (!orig_uri || !obj) {
-    fprintf(stderr, "uri='%s', obj=%p\n", orig_uri, obj);
+  if (!orig_uri || !obj)
     return -1;
-  }
 
   if (obj->fd != -1) {
     fprintf(stderr, "fd is already opened\n");
@@ -580,15 +590,13 @@ int ghttp2_session_init(GHTTP2 *obj, const char *orig_uri)
     goto ERROR_RETURN;
   }
 
-  obj->fd = fd;
-
   if (_ssl_handshake(obj->ssl, fd) < 0)
     goto ERROR_RETURN;
 
-  if (_make_non_block(obj->fd) < 0)
+  if (_make_non_block(fd) < 0)
     goto ERROR_RETURN;
 
-  if (_set_tcp_nodelay(obj->fd) < 0)
+  if (_set_tcp_nodelay(fd) < 0)
     goto ERROR_RETURN;
 
   rv = nghttp2_session_client_new(&(obj->session), obj->callbacks, obj);
@@ -604,14 +612,23 @@ int ghttp2_session_init(GHTTP2 *obj, const char *orig_uri)
     goto ERROR_RETURN;
   }
 
-  _add_watch(obj->fd, on_fd_watch, obj, on_fd_watch_destroy);
+  obj->fd = fd;
+  obj->gsource_id = _add_watch(obj->fd, on_fd_watch, obj, on_fd_watch_destroy);
 
   return 0;
 
 ERROR_RETURN:
-  if (fd != -1) {
+  if (fd != -1)
     close(fd);
-    obj->fd = -1;
+
+  if (obj->uri) {
+    ghttp2_uri_free(obj->uri);
+    obj->uri = NULL;
+  }
+
+  if (obj->session) {
+    nghttp2_session_del(obj->session);
+    obj->session = NULL;
   }
 
   return -1;
@@ -630,38 +647,138 @@ ERROR_RETURN:
         NGHTTP2_NV_FLAG_NONE                                                   \
   }
 
-int ghttp2_request(GHTTP2 *obj, const char *orig_uri)
+int ghttp2_session_request(GHTTP2 *obj, GHTTP2Req *req)
 {
-  GHTTP2Req *req;
+  int stream_id;
+  nghttp2_nv *nvlist;
+  GList *keys, *cur;
+  guint count, i;
+
   /* Make sure that the last item is NULL */
+#if 0
   const nghttp2_nv nva[] = { MAKE_NV(":method", "GET"),
-      MAKE_NV_CS(":path", obj->uri->path),
+      MAKE_NV_CS(":path", req->uri->path),
       MAKE_NV(":scheme", "https"),
       MAKE_NV_CS(":authority", obj->uri->portstr),
       MAKE_NV("accept", "*/*"),
       MAKE_NV("user-agent", "nghttp2/" NGHTTP2_VERSION) };
-
-  if (!orig_uri || !obj)
+#endif
+  if (!req || !obj)
     return -1;
 
-  req = _request_new(obj, orig_uri);
-  if (!req)
-    return -1;
+  printf("new request - path '%s'\n", req->uri->path);
 
-  obj->reqs = g_list_append(obj->reqs, req);
+  if (obj->fd == -1) {
+    printf("re-connect\n");
+    ghttp2_session_connect(obj, req->uri->str);
+  }
 
-  req->stream_id = nghttp2_submit_request(obj->session, NULL, nva,
-      sizeof(nva) / sizeof(nva[0]), NULL, req);
-  if (req->stream_id < 0) {
+  keys = g_hash_table_get_keys(req->props);
+  count = g_list_length(keys);
+  nvlist = calloc(count, sizeof(nghttp2_nv));
+
+  cur = keys;
+  i = 0;
+  while (cur) {
+    nvlist[i].name = (uint8_t *) g_strdup(cur->data);
+    nvlist[i].namelen = strlen((char *) nvlist[i].name);
+    nvlist[i].value = (uint8_t *) g_strdup(
+        g_hash_table_lookup(req->props, cur->data));
+    nvlist[i].valuelen = strlen((char *) nvlist[i].value);
+
+    cur = cur->next;
+    i++;
+  }
+
+  stream_id = nghttp2_submit_request(obj->session, NULL, nvlist, count, NULL,
+      req);
+  if (stream_id < 0) {
     fprintf(stderr,
         "nghttp2_submit_request: error_code=%d, msg=%s\n", req->stream_id,
         nghttp2_strerror(req->stream_id));
-    _free_req(req);
     return -1;
   }
+
+  obj->reqs = g_list_append(obj->reqs, req);
+
+  req->ghttp2 = obj;
+  req->stream_id = stream_id;
 
   printf("[INFO] Stream ID = %d\n", req->stream_id);
 
   return 0;
 }
 
+GHTTP2Req* ghttp2_request_new(const char *uristr)
+{
+  GHTTP2Req *req;
+
+  if (!uristr)
+    return NULL;
+
+  req = calloc(1, sizeof(GHTTP2Req));
+  if (!req)
+    return NULL;
+
+  req->uri = ghttp2_uri_parse(uristr);
+  if (!req->uri) {
+    free(req);
+    return NULL;
+  }
+
+  req->ghttp2 = NULL;
+  req->stream_id = -1;
+  req->props = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
+
+  g_hash_table_insert(req->props, g_strdup(":method"), g_strdup("GET"));
+  g_hash_table_insert(req->props, g_strdup(":path"), g_strdup(req->uri->path));
+  g_hash_table_insert(req->props, g_strdup(":scheme"), g_strdup("https"));
+  g_hash_table_insert(req->props, g_strdup(":authority"), g_strdup(req->uri->portstr));
+  g_hash_table_insert(req->props, g_strdup("accept"), g_strdup("*/*"));
+  g_hash_table_insert(req->props, g_strdup("user-agent"), g_strdup("nghttp2/" NGHTTP2_VERSION));
+
+  return req;
+}
+
+void ghttp2_request_free(GHTTP2Req *req)
+{
+  if (!req)
+    return;
+
+  if (req->uri)
+    ghttp2_uri_free(req->uri);
+
+  if (req->ghttp2)
+    req->ghttp2->reqs = g_list_remove(req->ghttp2->reqs, req);
+
+  if (req->props)
+    g_hash_table_destroy(req->props);
+
+  memset(req, 0, sizeof(GHTTP2Req));
+  free(req);
+}
+
+int ghttp2_request_get_stream_id(GHTTP2Req *req)
+{
+  if (!req)
+    return -1;
+
+  return req->stream_id;
+}
+
+void ghttp2_request_set_prop(GHTTP2Req *req, const char *name,
+    const char *value)
+{
+  gchar *prev;
+
+  if (!req || !name)
+    return;
+
+  prev = g_hash_table_lookup(req->props, name);
+  if (prev) {
+    g_hash_table_replace(req->props, g_strdup(name), g_strdup(value));
+  }
+  else {
+    g_hash_table_insert(req->props, g_strdup(name), g_strdup(value));
+  }
+}

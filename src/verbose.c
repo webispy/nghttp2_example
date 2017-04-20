@@ -35,6 +35,23 @@ static const char *setting_ids[] = {
   "SETTINGS_MAX_HEADER_LIST_SIZE"
 };
 
+static const char *error_codes[] = {
+  "",
+  "PROTOCOL_ERROR",
+  "INTERNAL_ERROR",
+  "FLOW_CONTROL_ERROR",
+  "SETTINGS_TIMEOUT",
+  "STREAM_CLOSED",
+  "FRAME_SIZE_ERROR",
+  "REFUSED_STREAM",
+  "CANCEL",
+  "COMPRESSION_ERROR",
+  "CONNECT_ERROR",
+  "ENHANCE_YOUR_CALM",
+  "INADEQUATE_SECURITY",
+  "HTTP_1_1_REQUIRED"
+};
+
 static void _log_flag(int type, uint8_t flag)
 {
   int comma = 0;
@@ -246,7 +263,6 @@ void verbose_header(nghttp2_session *session, const nghttp2_frame *frame,
     const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen,
     uint8_t flags, void *user_data)
 {
-  show_stream_id(frame->hd.stream_id);
   printf("header ");
   fwrite(name, 1, namelen, stdout);
   printf(": ");
@@ -259,4 +275,11 @@ void verbose_datachunk(nghttp2_session *session, uint8_t flags,
 {
   show_recv_stream_id(stream_id);
   recv_info("DATA chunk <length=%zu, flags=0x%02x>", len, flags);
+}
+
+void verbose_stream_close(nghttp2_session *session, int32_t stream_id,
+    uint32_t error_code)
+{
+  show_stream_id(stream_id);
+  printf("closed, error_code=%d (%s)\n", error_code, error_codes[error_code]);
 }
