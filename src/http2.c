@@ -20,10 +20,7 @@
 
 #include "verbose.h"
 #include "http2.h"
-
-enum {
-  IO_NONE, WANT_READ, WANT_WRITE
-};
+#include "fdsource.h"
 
 struct _ghttp2_req {
   int stream_id;
@@ -40,32 +37,12 @@ struct _ghttp2 {
   SSL *ssl;
   int fd;
 
-  int want_io;
-
   nghttp2_session *session;
   nghttp2_session_callbacks *callbacks;
 
   GList *reqs;
-  guint gsource_id;
+  GSource *gsource_id;
 };
-
-static guint _add_watch(int fd, GIOFunc func, gpointer user_data,
-    GDestroyNotify destroy_func)
-{
-  GIOChannel *channel;
-  GIOCondition cond = 0;
-  guint src;
-
-  cond = G_IO_IN | G_IO_OUT | G_IO_PRI | G_IO_ERR | G_IO_HUP | G_IO_NVAL;
-
-  channel = g_io_channel_unix_new(fd);
-  src = g_io_add_watch_full(channel, G_PRIORITY_DEFAULT, cond, func, user_data,
-      destroy_func);
-  g_io_channel_set_flags(channel, G_IO_FLAG_NONBLOCK, NULL);
-  g_io_channel_unref(channel);
-
-  return src;
-}
 
 /*
  * Connects to the host |host| and port |port|.  This function returns
@@ -201,15 +178,15 @@ static ssize_t send_callback(nghttp2_session *session, const uint8_t *data,
   GHTTP2 *obj = user_data;
   int rv;
 
-  obj->want_io = IO_NONE;
+  ghttp2_fd_watch_want_cond(obj->gsource_id, 0);
   ERR_clear_error();
 
   rv = SSL_write(obj->ssl, data, (int) length);
   if (rv <= 0) {
     int err = SSL_get_error(obj->ssl, rv);
     if (err == SSL_ERROR_WANT_WRITE || err == SSL_ERROR_WANT_READ) {
-      obj->want_io =
-          (err == SSL_ERROR_WANT_READ ? WANT_READ : WANT_WRITE);
+      ghttp2_fd_watch_want_cond(obj->gsource_id,
+          (err == SSL_ERROR_WANT_READ ? G_IO_IN : G_IO_OUT));
       rv = NGHTTP2_ERR_WOULDBLOCK;
     }
     else {
@@ -232,15 +209,15 @@ static ssize_t recv_callback(nghttp2_session *session, uint8_t *buf,
   GHTTP2 *obj = user_data;
   int rv;
 
-  obj->want_io = IO_NONE;
+  ghttp2_fd_watch_want_cond(obj->gsource_id, 0);
   ERR_clear_error();
 
   rv = SSL_read(obj->ssl, buf, (int) length);
   if (rv < 0) {
     int err = SSL_get_error(obj->ssl, rv);
     if (err == SSL_ERROR_WANT_WRITE || err == SSL_ERROR_WANT_READ) {
-      obj->want_io =
-          (err == SSL_ERROR_WANT_READ ? WANT_READ : WANT_WRITE);
+      ghttp2_fd_watch_want_cond(obj->gsource_id,
+          (err == SSL_ERROR_WANT_READ ? G_IO_IN : G_IO_OUT));
       rv = NGHTTP2_ERR_WOULDBLOCK;
     }
     else {
@@ -295,8 +272,10 @@ static int on_stream_close_callback(nghttp2_session *session, int32_t stream_id,
   verbose_stream_close(session, stream_id, error_code);
 
   req = nghttp2_session_get_stream_user_data(session, stream_id);
-  if (!req)
+  if (!req) {
+    dbg("can't find request info");
     return 0;
+  }
 
   rv = nghttp2_session_terminate_session(session, NGHTTP2_NO_ERROR);
   if (rv != 0) {
@@ -326,15 +305,13 @@ static int on_data_chunk_recv_callback(nghttp2_session *session, uint8_t flags,
   return 0;
 }
 
-static gboolean on_fd_watch(GIOChannel *channel, GIOCondition cond,
-    gpointer user_data)
+static gboolean on_fd_watch(gpointer user_data)
 {
   int rv;
   GHTTP2 *obj = user_data;
 
-  //printf("cond=%d\n", cond);
-
   //if (cond & G_IO_IN) {
+  if (nghttp2_session_want_read(obj->session)) {
     rv = nghttp2_session_recv(obj->session);
     if (rv != 0) {
       fprintf(stderr,
@@ -342,9 +319,10 @@ static gboolean on_fd_watch(GIOChannel *channel, GIOCondition cond,
           nghttp2_strerror(rv));
       return FALSE;
     }
-  //}
+  }
 
   //if (cond & G_IO_OUT) {
+  if (nghttp2_session_want_write(obj->session)) {
     rv = nghttp2_session_send(obj->session);
     if (rv != 0) {
       fprintf(stderr,
@@ -352,11 +330,6 @@ static gboolean on_fd_watch(GIOChannel *channel, GIOCondition cond,
           nghttp2_strerror(rv));
       return FALSE;
     }
-  //}
-
-  if ((cond & G_IO_HUP) || (cond & G_IO_ERR)) {
-    fprintf(stderr, "cond is 0x%X\n", cond);
-    return FALSE;
   }
 
   return TRUE;
@@ -365,7 +338,7 @@ static gboolean on_fd_watch(GIOChannel *channel, GIOCondition cond,
 static void on_fd_watch_destroy(gpointer user_data)
 {
   GHTTP2 *obj = user_data;
-  dbg("destroy");
+  dbg("fd_watch destroy");
 
   if (!obj)
     return;
@@ -421,7 +394,7 @@ GHTTP2Uri *ghttp2_uri_parse(const char *orig_uri)
 
   FIELD_FILL(UF_SCHEMA, schema, NULL);
   FIELD_FILL(UF_HOST, host, NULL);
-  FIELD_FILL(UF_PATH, path, strdup(""));
+  FIELD_FILL(UF_PATH, path, strdup("/"));
   FIELD_FILL(UF_QUERY, query, NULL);
   FIELD_FILL(UF_FRAGMENT, fragment, NULL);
   FIELD_FILL(UF_USERINFO, userinfo, NULL);
@@ -441,6 +414,7 @@ GHTTP2Uri *ghttp2_uri_parse(const char *orig_uri)
     FIELD_FILL(UF_PORT, portstr, NULL);
   }
 
+  dbg("uri parsing succeed");
   return uri;
 }
 
@@ -480,7 +454,6 @@ GHTTP2 *ghttp2_session_new()
     return NULL;
 
   obj->fd = -1;
-  obj->want_io = IO_NONE;
 
   ret = nghttp2_session_callbacks_new(&(obj->callbacks));
   if (ret != 0) {
@@ -535,7 +508,7 @@ void ghttp2_session_free(GHTTP2 *obj)
     return;
 
   if (obj->gsource_id)
-    g_source_remove(obj->gsource_id);
+    g_source_destroy(obj->gsource_id);
 
   if (obj->fd != -1)
     close(obj->fd);
@@ -613,7 +586,11 @@ int ghttp2_session_connect(GHTTP2 *obj, const char *orig_uri)
   }
 
   obj->fd = fd;
-  obj->gsource_id = _add_watch(obj->fd, on_fd_watch, obj, on_fd_watch_destroy);
+  obj->gsource_id = ghttp2_fd_watch_add(obj->session, fd, on_fd_watch, obj,
+      on_fd_watch_destroy);
+  g_source_unref(obj->gsource_id);
+
+  dbg("session connected (fd=%d, session=%p)", fd, obj->session);
 
   return 0;
 
@@ -666,10 +643,8 @@ int ghttp2_session_request(GHTTP2 *obj, GHTTP2Req *req)
   if (!req || !obj)
     return -1;
 
-  printf("new request - path '%s'\n", req->uri->path);
-
   if (obj->fd == -1) {
-    printf("re-connect\n");
+    dbg("fd closed. try re-connect");
     ghttp2_session_connect(obj, req->uri->str);
   }
 
@@ -690,8 +665,13 @@ int ghttp2_session_request(GHTTP2 *obj, GHTTP2Req *req)
     i++;
   }
 
+#if 1
   stream_id = nghttp2_submit_request(obj->session, NULL, nvlist, count, NULL,
       req);
+#else
+  stream_id = nghttp2_submit_request(obj->session, NULL, nva, count, NULL,
+      req);
+#endif
   if (stream_id < 0) {
     fprintf(stderr,
         "nghttp2_submit_request: error_code=%d, msg=%s\n", req->stream_id,
@@ -704,7 +684,7 @@ int ghttp2_session_request(GHTTP2 *obj, GHTTP2Req *req)
   req->ghttp2 = obj;
   req->stream_id = stream_id;
 
-  printf("[INFO] Stream ID = %d\n", req->stream_id);
+  dbg("new request(path '%s', stream_id=%d)", req->uri->path, req->stream_id);
 
   return 0;
 }
@@ -733,9 +713,9 @@ GHTTP2Req* ghttp2_request_new(const char *uristr)
   g_hash_table_insert(req->props, g_strdup(":method"), g_strdup("GET"));
   g_hash_table_insert(req->props, g_strdup(":path"), g_strdup(req->uri->path));
   g_hash_table_insert(req->props, g_strdup(":scheme"), g_strdup("https"));
-  g_hash_table_insert(req->props, g_strdup(":authority"), g_strdup(req->uri->portstr));
-  g_hash_table_insert(req->props, g_strdup("accept"), g_strdup("*/*"));
-  g_hash_table_insert(req->props, g_strdup("user-agent"), g_strdup("nghttp2/" NGHTTP2_VERSION));
+  g_hash_table_insert(req->props, g_strdup(":authority"), g_strdup_printf("%s:%d", req->uri->host, req->uri->port));
+  //g_hash_table_insert(req->props, g_strdup("accept"), g_strdup("*/*"));
+  //g_hash_table_insert(req->props, g_strdup("user-agent"), g_strdup("nghttp2/" NGHTTP2_VERSION));
 
   return req;
 }

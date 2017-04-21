@@ -26,6 +26,13 @@ set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${EXTRA_CFLAGS}")
 
 include_directories(${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/src)
 
-add_executable(${PROJECT_NAME} main.c src/verbose.c src/http2.c)
+set(SRCS
+  main.c
+  src/verbose.c
+  src/http2.c
+  src/fdsource.c
+)
+
+add_executable(${PROJECT_NAME} main.c ${SRCS})
 target_link_libraries(${PROJECT_NAME} ${pkgs_LDFLAGS} "-lhttp_parser")
 

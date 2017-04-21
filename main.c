@@ -16,7 +16,7 @@ GHTTP2 *handle;
 
 static gboolean do_request(gpointer data)
 {
-  printf("Try %s\n", (char *)data);
+  printf("\n> Try %s\n", (char *)data);
 
   ghttp2_session_request(handle, ghttp2_request_new(data));
   return FALSE;
@@ -49,13 +49,14 @@ int main(int argc, char **argv)
     return -1;
   }
 
-  printf("session connected\n");
+  printf("> session connected\n");
 
   for (i = 1; i < argc; i++) {
-    printf("add timer %d secons uri '%s'\n", i, argv[i]);
-    g_timeout_add_seconds((guint) i, do_request, argv[i]);
+    printf("> add timer %d milliseconds uri '%s'\n", i * 100, argv[i]);
+    g_timeout_add(100 * (guint) i, do_request, argv[i]);
   }
 
+  printf("> start mainloop\n");
   g_main_loop_run(mainloop);
 
   ghttp2_session_free(handle);
