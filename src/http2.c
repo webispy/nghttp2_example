@@ -485,7 +485,7 @@ GHTTP2 *ghttp2_session_new()
   }
 
   /* Disable SSLv2 and enable all workarounds for buggy servers */
-  SSL_CTX_set_options(obj->ssl_ctx, SSL_OP_ALL | SSL_OP_NO_SSLv2);
+  SSL_CTX_set_options(obj->ssl_ctx, (int)(SSL_OP_ALL | SSL_OP_NO_SSLv2));
   SSL_CTX_set_mode(obj->ssl_ctx, SSL_MODE_AUTO_RETRY);
   SSL_CTX_set_mode(obj->ssl_ctx, SSL_MODE_RELEASE_BUFFERS);
 
