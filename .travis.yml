@@ -1,0 +1,31 @@
+language: c
+compiler:
+  - clang
+  - gcc
+sudo: required
+dist: xenial
+
+env:
+  global:
+    # The next declaration is the encrypted COVERITY_SCAN_TOKEN, created
+    #   via the "travis encrypt" command using the project repo's public key
+    - secure: "qQWqEA/W+IGIrHbXWGpWFEfFS2eWJ5uExVu3fKBCgq7lBY70H3VBeOB3XN1n+RgCNGHpk/mfgh9+IKuNiQ/U5cdxjU7CnXLVBu7RO0BCEzHNvrkWVMM/kjL+mmcs8aNE5/Fs6BNUEROAglkm2vbG5/Ki6hPWRRIjkF6EL8jTvhH9uC0mbQfLwuXrtWVOWBX7l6PvHBVGX4O7r1XzBOCldr/5SuRLLwDZluJUwnz6r6ojrRdO+1NQGcZcZxSeX67oE0dSknqMuF0sMmLtTM2MtoG+lm1h/E9y+Xy77ftuJL8lP+4Nr6AksPyzUQHXL7zxek5nodEMbbeAj8RoMRaRLVMj0bZB4KdF+BJDNm8DQXeFTFjT+OgAIN3YNou8RamPMxxG3QtetS8nKmrqciDZG4aXURj5DZdxqENSfWF86L5zVQ8pFSdbTR2N17Gg490DcKAFeCu1Zw3R7AmvlpnBF9o02sU7arzlMfYXZclb/qcfH5pqpehBeai8Bcvoh+1RRuvTGGlR0g9Tv+c8HiGLE9PkvLfrFxt4a7bFSU27X+TrJKfwa+9NeFTM1Cfh9igKgdDDgIa5w6VgOKWsOEKQ+Kl1mMGIYHBxbmNujGFJeJhCKgal6zVPseZYFmoGIwoJGGekdtNRZ1unI7Q1MGdbWuT9OQhNj03B0VK8X2BAQ+o="
+
+before_install:
+  - sudo apt-get -qq update
+  - sudo apt-get install -y cmake libglib2.0-dev libnghttp2-dev libssl-dev libhttp-parser-dev
+  - echo -n | openssl s_client -connect scan.coverity.com:443 | sed -ne '/-BEGIN CERTIFICATE-/,/-END CERTIFICATE-/p' | sudo tee -a /etc/ssl/certs/ca-
+
+addons:
+  coverity_scan:
+    project:
+      name: webispy/nghttp2_example
+    notification_email: webispy@gmail.com
+    build_command_prepend: "cmake ."
+    build_command: "make"
+    branch_pattern: master
+
+before_script:
+  - cmake .
+script:
+  - make
