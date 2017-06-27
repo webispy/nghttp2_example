@@ -1,6 +1,8 @@
 #ifndef __HTTP2_H__
 #define __HTTP2_H__
 
+#include <stdint.h>
+
 struct ghttp2_uri {
   char *schema;
   char *host;
@@ -17,10 +19,11 @@ typedef struct ghttp2_uri GHTTP2Uri;
 typedef struct _ghttp2_req GHTTP2Req;
 typedef struct _ghttp2 GHTTP2;
 
-GHTTP2* ghttp2_session_new();
-void    ghttp2_session_free(GHTTP2 *obj);
-int     ghttp2_session_connect(GHTTP2 *obj, const char *uri);
-int     ghttp2_session_request(GHTTP2 *obj, GHTTP2Req *req);
+GHTTP2* ghttp2_client_new();
+void    ghttp2_client_free(GHTTP2 *obj);
+int     ghttp2_client_connect(GHTTP2 *obj, const char *uri);
+int     ghttp2_client_disconnect(GHTTP2 *obj);
+int     ghttp2_client_request(GHTTP2 *obj, GHTTP2Req *req);
 
 GHTTP2Uri* ghttp2_uri_parse(const char *orig_uri);
 void       ghttp2_uri_free(GHTTP2Uri *uri);

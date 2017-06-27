@@ -18,7 +18,7 @@ static gboolean do_request(gpointer data)
 {
   printf("\n> Try %s\n", (char *)data);
 
-  ghttp2_session_request(handle, ghttp2_request_new(data));
+  ghttp2_client_request(handle, ghttp2_request_new(data));
   return FALSE;
 }
 
@@ -42,9 +42,9 @@ int main(int argc, char **argv)
   SSL_load_error_strings();
   SSL_library_init();
 
-  handle = ghttp2_session_new();
+  handle = ghttp2_client_new();
 
-  if (ghttp2_session_connect(handle, argv[1]) < 0) {
+  if (ghttp2_client_connect(handle, argv[1]) < 0) {
     printf("session_connect failed\n");
     return -1;
   }
@@ -59,7 +59,7 @@ int main(int argc, char **argv)
   printf("> start mainloop\n");
   g_main_loop_run(mainloop);
 
-  ghttp2_session_free(handle);
+  ghttp2_client_free(handle);
 
   return EXIT_SUCCESS;
 }

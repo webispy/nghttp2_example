@@ -400,11 +400,11 @@ GHTTP2Uri *ghttp2_uri_parse(const char *orig_uri)
   FIELD_FILL(UF_USERINFO, userinfo, NULL);
 
   if (u.port == 0) {
-    if (!strcmp(uri->schema, "http")) {
+    if (!g_strcmp0(uri->schema, "http")) {
       uri->port = 80;
       uri->portstr = strdup("80");
     }
-    else if (!strcmp(uri->schema, "https")) {
+    else if (!g_strcmp0(uri->schema, "https")) {
       uri->port = 443;
       uri->portstr = strdup("443");
     }
@@ -444,7 +444,7 @@ void ghttp2_uri_free(GHTTP2Uri *uri)
   free(uri);
 }
 
-GHTTP2 *ghttp2_session_new()
+GHTTP2 *ghttp2_client_new()
 {
   GHTTP2 *obj;
   int ret;
@@ -480,7 +480,7 @@ GHTTP2 *ghttp2_session_new()
   if (obj->ssl_ctx == NULL) {
     fprintf(stderr, "SSL_CTX_new: %s\n",
         ERR_error_string(ERR_get_error(), NULL));
-    ghttp2_session_free(obj);
+    ghttp2_client_free(obj);
     return NULL;
   }
 
@@ -495,14 +495,14 @@ GHTTP2 *ghttp2_session_new()
   obj->ssl = SSL_new(obj->ssl_ctx);
   if (obj->ssl == NULL) {
     fprintf(stderr, "SSL_new: %s\n", ERR_error_string(ERR_get_error(), NULL));
-    ghttp2_session_free(obj);
+    ghttp2_client_free(obj);
     return NULL;
   }
 
   return obj;
 }
 
-void ghttp2_session_free(GHTTP2 *obj)
+void ghttp2_client_free(GHTTP2 *obj)
 {
   if (!obj)
     return;
@@ -537,18 +537,23 @@ void ghttp2_session_free(GHTTP2 *obj)
   free(obj);
 }
 
-int ghttp2_session_connect(GHTTP2 *obj, const char *orig_uri)
+int ghttp2_client_connect(GHTTP2 *obj, const char *orig_uri)
 {
   int rv;
   int fd = -1;
 
-  if (!orig_uri || !obj)
+  if (!orig_uri || !obj) {
+    fprintf(stderr, "invalid parameter\n");
     return -1;
+  }
 
   if (obj->fd != -1) {
     fprintf(stderr, "fd is already opened\n");
     return -1;
   }
+
+  if (obj->uri)
+    ghttp2_uri_free(obj->uri);
 
   obj->uri = ghttp2_uri_parse(orig_uri);
   if (!obj->uri) {
@@ -611,6 +616,37 @@ ERROR_RETURN:
   return -1;
 }
 
+int ghttp2_client_disconnect(GHTTP2 *obj)
+{
+  if (!obj) {
+    fprintf(stderr, "invalid parameter\n");
+    return -1;
+  }
+
+  if (obj->fd == -1) {
+    fprintf(stderr, "fd is already closed\n");
+    return -1;
+  }
+
+  _disconnect(obj);
+
+  if (obj->gsource_id) {
+    g_source_destroy(obj->gsource_id);
+    obj->gsource_id = NULL;
+  }
+
+  if (obj->session) {
+    nghttp2_session_del(obj->session);
+    obj->session = NULL;
+  }
+
+  if (obj->uri) {
+    ghttp2_uri_free(obj->uri);
+    obj->uri = NULL;
+  }
+
+  return 0;
+}
 
 #define MAKE_NV(NAME, VALUE)                                                   \
   {                                                                            \
@@ -624,7 +660,7 @@ ERROR_RETURN:
         NGHTTP2_NV_FLAG_NONE                                                   \
   }
 
-int ghttp2_session_request(GHTTP2 *obj, GHTTP2Req *req)
+int ghttp2_client_request(GHTTP2 *obj, GHTTP2Req *req)
 {
   int stream_id;
   nghttp2_nv *nvlist;
@@ -645,7 +681,7 @@ int ghttp2_session_request(GHTTP2 *obj, GHTTP2Req *req)
 
   if (obj->fd == -1) {
     dbg("fd closed. try re-connect");
-    ghttp2_session_connect(obj, req->uri->str);
+    ghttp2_client_connect(obj, req->uri->str);
   }
 
   keys = g_hash_table_get_keys(req->props);
