@@ -1,0 +1,20 @@
+
+--this-is-a-boundary
+Content-Disposition: form-data; name="metadata"
+Content-Type: application/json; charset=UTF-8
+
+{
+   "event" : {
+      "header" : {
+         "namespace" : "SpeechRecognizer",
+         "name" : "StopCapture",
+         "messageId" : "2",
+         "dialogRequestId" : "dialogrequest-321",
+      },
+      "payload" : {
+      }
+   }
+}
+
+--this-is-a-boundary--
+

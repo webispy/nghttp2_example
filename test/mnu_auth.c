@@ -62,12 +62,30 @@ static int run_load(menu_manager *mm, struct menu_data *menu, void *user_data)
   return 0;
 }
 
+
+static int run_save(menu_manager *mm, struct menu_data *menu, void *user_data)
+{
+  FILE *fp;
+
+  fp = fopen(data_filename, "w");
+  if (!fp)
+    return -1;
+
+  fprintf(fp, "%s\n", data_token);
+  fprintf(fp, "%s\n", data_refresh_token);
+
+  fclose(fp);
+
+  return 0;
+}
+
 struct menu_data menu_auth[] = {
 	{ "1", "Set token", NULL, run_set_token, data_token },
 	{ "2", "Set refresh_token", NULL, run_set_refresh_token, data_refresh_token },
 	{ "_", NULL },
 	{ "3", "Load from file", NULL, run_load, NULL },
+  { "4", "Save to file", NULL, run_save, NULL },
   { "-", "(content: 1st-line=token, 2nd-line=refresh_token)", NULL },
-	{ "4", "- Set file path", NULL, NULL, data_filename },
+	{ "5", "- Set file path", NULL, NULL, data_filename },
 	{ NULL, NULL, },
 };

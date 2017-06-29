@@ -108,7 +108,8 @@ int avs_disconnect(AVS *avs)
   return 0;
 }
 
-GHTTP2Req *avs_request_full(AVS *avs, const char *path)
+GHTTP2Req *avs_request_new_full(AVS *avs, const char *path, const char *method,
+    const void *data, size_t data_size)
 {
   GHTTP2Req *req;
   char *bearer;
@@ -127,7 +128,13 @@ GHTTP2Req *avs_request_full(AVS *avs, const char *path)
   ghttp2_request_set_prop(req, "authorization", bearer);
   g_free(bearer);
 
-  ghttp2_client_request(avs->handle, req);
+  ghttp2_request_set_prop(req, ":method", method);
+  ghttp2_request_set_data(req, data, data_size);
 
   return req;
+}
+
+int avs_request(AVS *avs, GHTTP2Req *req)
+{
+  return ghttp2_client_request(avs->handle, req);
 }

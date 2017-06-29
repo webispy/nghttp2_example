@@ -1,0 +1,71 @@
+
+--this-is-a-boundary
+Content-Disposition: form-data; name="metadata"
+Content-Type: application/json; charset=UTF-8
+
+{
+   "context" : [
+      {
+         "header" : {
+            "namespace" : "Alerts",
+            "name" : "AlertsState"
+         },
+         "payload" : {
+            "activeAlerts" : [],
+            "allAlerts" : []
+         }
+      },
+      {
+         "header" : {
+            "name" : "PlaybackState",
+            "namespace" : "AudioPlayer"
+         },
+         "payload" : {
+            "offsetInMilliseconds" : 0,
+            "playerActivity" : "IDLE",
+            "token" : ""
+         }
+      },
+      {
+         "payload" : {
+            "muted" : false,
+            "volume" : 50
+         },
+         "header" : {
+            "name" : "VolumeState",
+            "namespace" : "Speaker"
+         }
+      },
+      {
+         "header" : {
+            "name" : "SpeechState",
+            "namespace" : "SpeechSynthesizer"
+         },
+         "payload" : {
+            "playerActivity" : "FINISHED",
+            "offsetInMilliseconds" : 0,
+            "token" : ""
+         }
+      },
+      {
+         "header" : {
+            "name" : "RecognizerState",
+            "namespace" : "SpeechRecognizer"
+         },
+         "payload" : {
+            "wakeword" : "ALEXA"
+         }
+      }
+   ],
+   "event" : {
+      "payload" : {},
+      "header" : {
+         "name" : "SynchronizeState",
+         "messageId" : "1",
+         "namespace" : "System"
+      }
+   }
+}
+
+--this-is-a-boundary--
+

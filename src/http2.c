@@ -27,6 +27,12 @@ struct _ghttp2_req {
   GHTTP2Uri *uri;
   GHashTable *props;
 
+  nghttp2_data_provider data_prd;
+  const void *data;
+  size_t data_size;
+
+  FILE *fp_response;
+
   GHTTP2 *ghttp2;
 };
 
@@ -259,17 +265,21 @@ static int on_header_callback(nghttp2_session *session,
 
 /*
  * The implementation of nghttp2_on_stream_close_callback type. We use
- * this function to know the response is fully received. Since we just
- * fetch 1 resource in this program, after reception of the response,
- * we submit GOAWAY and close the session.
+ * this function to know the response is fully received.
  */
 static int on_stream_close_callback(nghttp2_session *session, int32_t stream_id,
     uint32_t error_code, void *user_data)
 {
   GHTTP2Req *req;
-  int rv;
+  int status;
 
   verbose_stream_close(session, stream_id, error_code);
+
+  status = nghttp2_session_get_stream_local_close(session, stream_id);
+  dbg("local close status = %d", status);
+
+  status = nghttp2_session_get_stream_remote_close(session, stream_id);
+  dbg("remote close status = = %d", status);
 
   req = nghttp2_session_get_stream_user_data(session, stream_id);
   if (!req) {
@@ -277,12 +287,10 @@ static int on_stream_close_callback(nghttp2_session *session, int32_t stream_id,
     return 0;
   }
 
-  rv = nghttp2_session_terminate_session(session, NGHTTP2_NO_ERROR);
-  if (rv != 0) {
-    fprintf(stderr,
-        "nghttp2_session_terminate_session: error_code=%d, msg=%s\n", rv,
-        nghttp2_strerror(rv));
-    return -1;
+  if (req->fp_response) {
+    dbg("close fp_response");
+    fclose(req->fp_response);
+    req->fp_response = NULL;
   }
 
   return 0;
@@ -296,11 +304,26 @@ static int on_data_chunk_recv_callback(nghttp2_session *session, uint8_t flags,
     int32_t stream_id, const uint8_t *data,
     size_t len, void *user_data)
 {
+  GHTTP2Req *req;
+
   verbose_datachunk(session, flags, stream_id, len);
+
+  if (len == 0)
+    return 0;
 
   printf("\t");
   fwrite(data, 1, len, stdout);
   printf("\n");
+
+  req = nghttp2_session_get_stream_user_data(session, stream_id);
+
+  if (!req->fp_response) {
+    char filename[255];
+    snprintf(filename, 255, "stream-%d.dat", stream_id);
+    req->fp_response = fopen(filename, "w");
+  }
+
+  fwrite(data, 1, len, req->fp_response);
 
   return 0;
 }
@@ -595,7 +618,7 @@ int ghttp2_client_connect(GHTTP2 *obj, const char *orig_uri)
       on_fd_watch_destroy);
   g_source_unref(obj->gsource_id);
 
-  dbg("session connected (fd=%d, session=%p)", fd, obj->session);
+  dbg("session connected (fd=%d, session=%p, obj=%p)", fd, obj->session, obj);
 
   return 0;
 
@@ -666,16 +689,9 @@ int ghttp2_client_request(GHTTP2 *obj, GHTTP2Req *req)
   nghttp2_nv *nvlist;
   GList *keys, *cur;
   guint count, i;
+  nghttp2_data_provider *data_prd = NULL;
 
   /* Make sure that the last item is NULL */
-#if 0
-  const nghttp2_nv nva[] = { MAKE_NV(":method", "GET"),
-      MAKE_NV_CS(":path", req->uri->path),
-      MAKE_NV(":scheme", "https"),
-      MAKE_NV_CS(":authority", obj->uri->portstr),
-      MAKE_NV("accept", "*/*"),
-      MAKE_NV("user-agent", "nghttp2/" NGHTTP2_VERSION) };
-#endif
   if (!req || !obj)
     return -1;
 
@@ -701,13 +717,11 @@ int ghttp2_client_request(GHTTP2 *obj, GHTTP2Req *req)
     i++;
   }
 
-#if 1
-  stream_id = nghttp2_submit_request(obj->session, NULL, nvlist, count, NULL,
-      req);
-#else
-  stream_id = nghttp2_submit_request(obj->session, NULL, nva, count, NULL,
-      req);
-#endif
+  if (req->data)
+    data_prd = &req->data_prd;
+
+  stream_id = nghttp2_submit_request(obj->session, NULL, nvlist, count,
+      data_prd, req);
   if (stream_id < 0) {
     fprintf(stderr,
         "nghttp2_submit_request: error_code=%d, msg=%s\n", req->stream_id,
@@ -749,7 +763,7 @@ GHTTP2Req* ghttp2_request_new(const char *uristr)
   g_hash_table_insert(req->props, g_strdup(":method"), g_strdup("GET"));
   g_hash_table_insert(req->props, g_strdup(":path"), g_strdup(req->uri->path));
   g_hash_table_insert(req->props, g_strdup(":scheme"), g_strdup("https"));
-  g_hash_table_insert(req->props, g_strdup(":authority"), g_strdup_printf("%s:%d", req->uri->host, req->uri->port));
+  //g_hash_table_insert(req->props, g_strdup(":authority"), g_strdup_printf("%s:%d", req->uri->host, req->uri->port));
   //g_hash_table_insert(req->props, g_strdup("accept"), g_strdup("*/*"));
   //g_hash_table_insert(req->props, g_strdup("user-agent"), g_strdup("nghttp2/" NGHTTP2_VERSION));
 
@@ -797,4 +811,70 @@ void ghttp2_request_set_prop(GHTTP2Req *req, const char *name,
   else {
     g_hash_table_insert(req->props, g_strdup(name), g_strdup(value));
   }
+}
+
+GHTTP2Req *ghttp2_client_get_request_by_stream_id(GHTTP2 *obj, int stream_id)
+{
+  GList *cur;
+  GHTTP2Req *req;
+
+  if (!obj)
+    return NULL;
+
+  cur = obj->reqs;
+  while (cur) {
+    req = cur->data;
+    if (req->stream_id == stream_id)
+      return req;
+
+    cur = cur->next;
+  }
+  return NULL;
+}
+
+static ssize_t _data_read_cb(nghttp2_session *session, int32_t stream_id,
+    uint8_t *buf, size_t len, uint32_t *data_flags, nghttp2_data_source *source,
+    void *user_data)
+{
+  GHTTP2 *obj = user_data;
+  GHTTP2Req *req;
+  size_t nread = 0;
+
+  req = ghttp2_client_get_request_by_stream_id(obj, stream_id);
+
+  dbg("buf=%p, len=%zd, source->ptr=%p, data_size=%zd\n", buf, len, source->ptr,
+      req->data_size);
+
+  if (len >= req->data_size) {
+    nread = req->data_size;
+    *data_flags |= NGHTTP2_DATA_FLAG_EOF;
+    dbg("set eof");
+  }
+  else {
+    nread = len;
+    req->data_size -= nread;
+  }
+
+  dbg("nread=%zd", nread);
+
+  printf("%s\n", (char *) source->ptr);
+
+  memcpy(buf, source->ptr, nread);
+  source->ptr = (unsigned char *) source->ptr + nread;
+
+  return (ssize_t) nread;
+}
+
+void ghttp2_request_set_data(GHTTP2Req *req, const void *data, size_t data_size)
+{
+  if (!req || !data)
+    return;
+
+  req->data = data;
+  req->data_size = data_size;
+
+  dbg("req=%p, data=%p, data_size=%zd", req, data, data_size);
+
+  req->data_prd.source.ptr = (void *) data;
+  req->data_prd.read_callback = _data_read_cb;
 }

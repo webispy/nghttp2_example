@@ -32,5 +32,6 @@ GHTTP2Req* ghttp2_request_new(const char *uristr);
 void       ghttp2_request_free(GHTTP2Req *req);
 int        ghttp2_request_get_stream_id(GHTTP2Req *req);
 void       ghttp2_request_set_prop(GHTTP2Req *req, const char *name, const char *value);
+void ghttp2_request_set_data(GHTTP2Req *req, const void *data, size_t data_size);
 
 #endif
