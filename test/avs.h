@@ -2,7 +2,9 @@
 #define __AVS_H__
 
 #include <glib.h>
+
 #include "http2.h"
+#include "verbose.h"
 
 typedef struct _AVS AVS;
 

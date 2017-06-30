@@ -263,7 +263,8 @@ void verbose_header(nghttp2_session *session, const nghttp2_frame *frame,
     const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen,
     uint8_t flags, void *user_data)
 {
-  printf("header ");
+  verbose_frame(DIR_RECV, session, frame);
+  printf("\theader ");
   fwrite(name, 1, namelen, stdout);
   printf(": ");
   fwrite(value, 1, valuelen, stdout);

@@ -13,25 +13,43 @@
 #include "http2.h"
 
 GHTTP2 *handle;
+GHTTP2Req *req;
 
 static gboolean do_request(gpointer data)
 {
-  printf("\n> Try %s\n", (char *)data);
+  printf("\n> Try request\n");
 
-  ghttp2_client_request(handle, ghttp2_request_new(data));
+  ghttp2_client_request(handle, data);
+
   return FALSE;
+}
+
+static void on_push(GHTTP2Req *req, GHashTable *headers, void *user_data)
+{
+  GList *keys, *cur;
+
+  printf("push !!! (stream-id=%d)\n", ghttp2_request_get_stream_id(req));
+  keys = g_hash_table_get_keys(headers);
+
+  cur = keys;
+  while (cur) {
+    printf("[%s] = [%s]\n", (char *) cur->data,
+        (char *) g_hash_table_lookup(headers, cur->data));
+    cur = cur->next;
+  }
+
+  g_list_free(keys);
 }
 
 int main(int argc, char **argv)
 {
   GMainLoop *mainloop;
   struct sigaction act;
-  int i;
+  char *authority;
+  char *host = "https://nghttp2.org";
 
-  if (argc < 2) {
-    fprintf(stderr, "Specify a https URI\n");
-    exit(EXIT_FAILURE);
-  }
+  if (argc == 2)
+    host = argv[1];
 
   mainloop = g_main_loop_new(NULL, FALSE);
 
@@ -43,18 +61,30 @@ int main(int argc, char **argv)
   SSL_library_init();
 
   handle = ghttp2_client_new();
+  if (!handle) {
+    return -1;
+  }
 
-  if (ghttp2_client_connect(handle, argv[1]) < 0) {
-    printf("session_connect failed\n");
+  ghttp2_client_set_push_callback(handle, on_push, NULL);
+
+  if (ghttp2_client_connect(handle, host) < 0) {
+    fprintf(stderr, "ghttp2_client_connect() failed\n");
     return -1;
   }
 
   printf("> session connected\n");
 
-  for (i = 1; i < argc; i++) {
-    printf("> add timer %d milliseconds uri '%s'\n", i * 100, argv[i]);
-    g_timeout_add(100 * (guint) i, do_request, argv[i]);
-  }
+  req = ghttp2_request_new("/");
+
+  ghttp2_request_set_response_callback(req, on_push, NULL);
+
+  authority = g_strdup_printf("%s:%d", ghttp2_client_get_uri(handle)->host,
+      ghttp2_client_get_uri(handle)->port);
+  ghttp2_request_set_header(req, ":authority", authority);
+  g_free(authority);
+
+  printf("> add timer 100 milliseconds uri '%s'\n", host);
+  g_timeout_add(100, do_request, req);
 
   printf("> start mainloop\n");
   g_main_loop_run(mainloop);

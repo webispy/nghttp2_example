@@ -23,8 +23,9 @@
 #define ANSI_COLOR_LIGHTCYAN    "\e[1;36m"
 #define ANSI_COLOR_WHITE        "\e[1;37m"
 
-#define dbg(fmt, args...) printf(ANSI_COLOR_DARKGRAY "<%s:%d> " ANSI_COLOR_NORMAL fmt "\n", __FILE__, __LINE__, ## args)
-#define info(fmt, args...) printf(fmt "\n", ## args)
+#define dbg(fmt, args...) fprintf(stdout, ANSI_COLOR_DARKGRAY "<%s:%d> " ANSI_COLOR_NORMAL fmt "\n", __FILE__, __LINE__, ## args)
+#define info(fmt, args...) fprintf(stdout, fmt "\n", ## args)
+#define err(fmt, args...) fprintf(stderr, ANSI_COLOR_DARKGRAY "<%s:%d> " ANSI_COLOR_NORMAL fmt "\n", __FILE__, __LINE__, ## args)
 
 void verbose_recv_frame(nghttp2_session *session, const nghttp2_frame *frame);
 void verbose_send_frame(nghttp2_session *session, const nghttp2_frame *frame);

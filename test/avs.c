@@ -23,14 +23,17 @@ AVS *avs_new()
     return NULL;
 
   avs->handle = ghttp2_client_new();
+  if (!avs->handle) {
+    free(avs);
+    return NULL;
+  }
 
   return avs;
 }
 
 void avs_free(AVS *avs)
 {
-  if (!avs)
-    return;
+  g_return_if_fail(avs != NULL);
 
   g_free(avs->token);
   g_free(avs->refresh_token);
@@ -42,8 +45,7 @@ void avs_free(AVS *avs)
 
 int avs_set_token(AVS *avs, const char *token)
 {
-  if (!avs)
-    return -1;
+  g_return_val_if_fail(avs != NULL, -1);
 
   if (avs->token)
     g_free(avs->token);
@@ -58,8 +60,7 @@ int avs_set_token(AVS *avs, const char *token)
 
 int avs_set_refresh_token(AVS *avs, const char *refresh_token)
 {
-  if (!avs)
-    return -1;
+  g_return_val_if_fail(avs != NULL, -1);
 
   if (avs->refresh_token)
     g_free(avs->refresh_token);
@@ -74,16 +75,11 @@ int avs_set_refresh_token(AVS *avs, const char *refresh_token)
 
 int avs_connect(AVS *avs)
 {
-  if (!avs)
-    return -1;
-
-  if (!avs->handle) {
-    fprintf(stderr, "handle is NULL\n");
-    return -1;
-  }
+  g_return_val_if_fail(avs != NULL, -1);
+  g_return_val_if_fail(avs->handle != NULL, -1);
 
   if (ghttp2_client_connect(avs->handle, HOST) < 0) {
-    fprintf(stderr, "ghttp2_client_connect failed\n");
+    err("ghttp2_client_connect failed");
     return -1;
   }
 
@@ -92,16 +88,11 @@ int avs_connect(AVS *avs)
 
 int avs_disconnect(AVS *avs)
 {
-  if (!avs)
-    return -1;
-
-  if (!avs->handle) {
-    fprintf(stderr, "handle is NULL\n");
-    return -1;
-  }
+  g_return_val_if_fail(avs != NULL, -1);
+  g_return_val_if_fail(avs->handle != NULL, -1);
 
   if (ghttp2_client_disconnect(avs->handle) < 0) {
-    fprintf(stderr, "ghttp2_client_disconnect failed\n");
+    err("ghttp2_client_disconnect failed");
     return -1;
   }
 
@@ -113,23 +104,23 @@ GHTTP2Req *avs_request_new_full(AVS *avs, const char *path, const char *method,
 {
   GHTTP2Req *req;
   char *bearer;
-  char *url;
 
-  if (!avs || !path)
-    return NULL;
+  g_return_val_if_fail(avs != NULL, NULL);
+  g_return_val_if_fail(path != NULL, NULL);
+  g_return_val_if_fail(method != NULL, NULL);
 
-  url = g_strdup_printf("%s%s", HOST, path);
-  req = ghttp2_request_new(url);
-  g_free(url);
+  req = ghttp2_request_new(path);
   if (!req)
     return NULL;
 
   bearer = g_strdup_printf("Bearer %s", avs->token);
-  ghttp2_request_set_prop(req, "authorization", bearer);
+  ghttp2_request_set_header(req, "authorization", bearer);
   g_free(bearer);
 
-  ghttp2_request_set_prop(req, ":method", method);
-  ghttp2_request_set_data(req, data, data_size);
+  ghttp2_request_set_header(req, ":method", method);
+
+  if (data)
+    ghttp2_request_set_data(req, data, data_size);
 
   return req;
 }

@@ -67,10 +67,10 @@ static int run_filedata(menu_manager *mm, struct menu_data *menu,
 
   req = avs_request_new_full(user_data, data_raw_uripath, data_raw_method,
       contents, length);
-  ghttp2_request_set_prop(req, "content-type", data_raw_contenttype);
+  ghttp2_request_set_header(req, "content-type", data_raw_contenttype);
 
   ret = avs_request(user_data, req);
-  if (ret != 0) {
+  if (ret < 0) {
     printf("avs_request() failed\n");
     return -1;
   }
