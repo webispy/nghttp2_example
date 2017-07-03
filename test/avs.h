@@ -3,8 +3,7 @@
 
 #include <glib.h>
 
-#include "http2.h"
-#include "verbose.h"
+#include "ghttp2.h"
 
 typedef struct _AVS AVS;
 

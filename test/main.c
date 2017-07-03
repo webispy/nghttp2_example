@@ -3,10 +3,6 @@
 #include <string.h>
 #include <unistd.h>
 
-#include <openssl/ssl.h>
-#include <openssl/err.h>
-#include <openssl/conf.h>
-
 #include "menu.h"
 #include "avs.h"
 
@@ -25,9 +21,6 @@ int main(int argc, char *argv[])
 {
   GMainLoop *loop;
 	menu_manager *manager;
-
-  SSL_load_error_strings();
-  SSL_library_init();
 
   loop = g_main_loop_new(NULL, FALSE);
 

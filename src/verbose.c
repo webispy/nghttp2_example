@@ -1,5 +1,9 @@
-#include <stdio.h>
+#ifdef CONFIG_VERBOSE
 
+#include <stdio.h>
+#include <ctype.h>
+
+#include "internal.h"
 #include "verbose.h"
 
 #define send_info(fmt, args...) printf(ANSI_COLOR_MAGENTA "send " fmt ANSI_COLOR_NORMAL "\n", ## args)
@@ -10,7 +14,9 @@
 #define show_stream_id(sid) printf("[" ANSI_COLOR_YELLOW "stream %02d " ANSI_COLOR_NORMAL "----] ", sid);
 #define show_frame(type, fmt, args...) printf("frame-type=%d(" ANSI_COLOR_LIGHTBLUE "%s" ANSI_COLOR_NORMAL ")" fmt "\n", type, types[type], ## args)
 
-enum { DIR_SEND, DIR_RECV };
+enum {
+  DIR_SEND, DIR_RECV
+};
 
 static const char *types[255] = {
   "DATA",
@@ -67,7 +73,8 @@ static void _log_flag(int type, uint8_t flag)
       comma = 1;
     }
     if (flag & NGHTTP2_FLAG_PADDED) { // 8
-      if (comma) printf(", ");
+      if (comma)
+        printf(", ");
       printf("PADDED");
     }
     break;
@@ -77,17 +84,20 @@ static void _log_flag(int type, uint8_t flag)
       comma = 1;
     }
     if (flag & NGHTTP2_FLAG_END_HEADERS) { // 4;
-      if (comma) printf(", ");
+      if (comma)
+        printf(", ");
       printf("END_HEADERS");
       comma = 1;
     }
     if (flag & NGHTTP2_FLAG_PADDED) { // 8
-      if (comma) printf(", ");
+      if (comma)
+        printf(", ");
       printf("PADDED");
       comma = 1;
     }
     if (flag & NGHTTP2_FLAG_PRIORITY) { // 20
-      if (comma) printf(", ");
+      if (comma)
+        printf(", ");
       printf("PRIORITY");
     }
     break;
@@ -102,7 +112,8 @@ static void _log_flag(int type, uint8_t flag)
       comma = 1;
     }
     if (flag & NGHTTP2_FLAG_PADDED) { // 8
-      if (comma) printf(", ");
+      if (comma)
+        printf(", ");
       printf("PADDED");
     }
     break;
@@ -246,7 +257,6 @@ static void verbose_frame(int dir, nghttp2_session *session,
   }
 }
 
-
 void verbose_recv_frame(nghttp2_session *session,
     const nghttp2_frame *frame)
 {
@@ -263,7 +273,7 @@ void verbose_header(nghttp2_session *session, const nghttp2_frame *frame,
     const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen,
     uint8_t flags, void *user_data)
 {
-  verbose_frame(DIR_RECV, session, frame);
+//  verbose_frame(DIR_RECV, session, frame);
   printf("\theader ");
   fwrite(name, 1, namelen, stdout);
   printf(": ");
@@ -284,3 +294,50 @@ void verbose_stream_close(nghttp2_session *session, int32_t stream_id,
   show_stream_id(stream_id);
   printf("closed, error_code=%d (%s)\n", error_code, error_codes[error_code]);
 }
+
+void verbose_hexdump(const char *pad, const void *data, size_t len,
+    size_t max_len, FILE *fp)
+{
+  size_t i = 0;
+  const unsigned char *addr = data;
+  unsigned char buf[17];
+
+  if (!data || !fp || len == 0)
+    return;
+
+  if (max_len != 0 && len > max_len)
+    len = max_len;
+
+  for (i = 0; i < len; i++) {
+    if ((i % 16) == 0) {
+      if (i != 0)
+        fprintf(fp, "  %s\n", buf);
+
+      if (pad)
+        fprintf(fp, "%s", pad);
+
+      fprintf(fp, "%04zx:", i);
+    }
+    else {
+      if ((i % 8) == 0)
+        fprintf(fp, " ");
+    }
+
+    fprintf(fp, " %02x", addr[i]);
+    if (isprint(addr[i]))
+      buf[i % 16] = addr[i];
+    else
+      buf[i % 16] = '.';
+
+    buf[i % 16 + 1] = '\0';
+  }
+
+  while ((i % 16) != 0) {
+    fprintf(fp, "   ");
+    i++;
+  }
+
+  fprintf(fp, " %s\n", buf);
+}
+
+#endif

@@ -3,6 +3,7 @@
 #include <stdlib.h>
 
 #include "avs.h"
+#include "src/internal.h"
 
 #define HOST "https://avs-alexa-na.amazon.com"
 
@@ -11,7 +12,7 @@ struct _AVS
   char *token;
   char *refresh_token;
 
-  GHTTP2 *handle;
+  GHTTP2Client *handle;
 };
 
 AVS *avs_new()
@@ -21,6 +22,8 @@ AVS *avs_new()
   avs = calloc(1, sizeof(struct _AVS));
   if (!avs)
     return NULL;
+
+  ghttp2_client_init();
 
   avs->handle = ghttp2_client_new();
   if (!avs->handle) {
@@ -114,10 +117,10 @@ GHTTP2Req *avs_request_new_full(AVS *avs, const char *path, const char *method,
     return NULL;
 
   bearer = g_strdup_printf("Bearer %s", avs->token);
-  ghttp2_request_set_header(req, "authorization", bearer);
+  ghttp2_request_add_header(req, "authorization", bearer);
   g_free(bearer);
 
-  ghttp2_request_set_header(req, ":method", method);
+  ghttp2_request_add_header(req, ":method", method);
 
   if (data)
     ghttp2_request_set_data(req, data, data_size);

@@ -3,23 +3,18 @@
 #include <string.h>
 #include <stdlib.h>
 
-#include <openssl/ssl.h>
-#include <openssl/err.h>
-#include <openssl/conf.h>
-
 #include <glib.h>
 
-#include "verbose.h"
-#include "http2.h"
+#include "ghttp2.h"
 
-GHTTP2 *handle;
+GHTTP2Client *client;
 GHTTP2Req *req;
 
 static gboolean do_request(gpointer data)
 {
   printf("\n> Try request\n");
 
-  ghttp2_client_request(handle, data);
+  ghttp2_client_request(client, data);
 
   return FALSE;
 }
@@ -45,7 +40,6 @@ int main(int argc, char **argv)
 {
   GMainLoop *mainloop;
   struct sigaction act;
-  char *authority;
   char *host = "https://nghttp2.org";
 
   if (argc == 2)
@@ -57,17 +51,16 @@ int main(int argc, char **argv)
   act.sa_handler = SIG_IGN;
   sigaction(SIGPIPE, &act, 0);
 
-  SSL_load_error_strings();
-  SSL_library_init();
+  ghttp2_client_init();
 
-  handle = ghttp2_client_new();
-  if (!handle) {
+  client = ghttp2_client_new();
+  if (!client) {
     return -1;
   }
 
-  ghttp2_client_set_push_callback(handle, on_push, NULL);
+  ghttp2_client_set_push_callback(client, on_push, NULL);
 
-  if (ghttp2_client_connect(handle, host) < 0) {
+  if (ghttp2_client_connect(client, host) < 0) {
     fprintf(stderr, "ghttp2_client_connect() failed\n");
     return -1;
   }
@@ -77,11 +70,7 @@ int main(int argc, char **argv)
   req = ghttp2_request_new("/");
 
   ghttp2_request_set_response_callback(req, on_push, NULL);
-
-  authority = g_strdup_printf("%s:%d", ghttp2_client_get_uri(handle)->host,
-      ghttp2_client_get_uri(handle)->port);
-  ghttp2_request_set_header(req, ":authority", authority);
-  g_free(authority);
+  ghttp2_request_set_header_authority(req, TRUE);
 
   printf("> add timer 100 milliseconds uri '%s'\n", host);
   g_timeout_add(100, do_request, req);
@@ -89,7 +78,7 @@ int main(int argc, char **argv)
   printf("> start mainloop\n");
   g_main_loop_run(mainloop);
 
-  ghttp2_client_free(handle);
+  ghttp2_client_free(client);
 
   return EXIT_SUCCESS;
 }

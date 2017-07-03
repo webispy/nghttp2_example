@@ -1,15 +1,13 @@
-SET(TESTAPP cli)
-SET(TESTAPP_SRCS
+set(TESTAPP ghttp2cli)
+set(TESTAPP_SRCS
 	menu.c
 	main.c
 	avs.c
   mnu_auth.c
   mnu_avs.c
-  ../src/verbose.c
-  ../src/http2.c
-  ../src/fdsource.c
 )
 
-ADD_EXECUTABLE(${TESTAPP} ${TESTAPP_SRCS})
-TARGET_LINK_LIBRARIES(${TESTAPP} ${pkgs_LDFLAGS} "-lhttp_parser")
-
+add_executable(${TESTAPP} ${TESTAPP_SRCS})
+add_dependencies(${TESTAPP} ${PROJECT_NAME})
+target_link_libraries(${TESTAPP} ${pkgs_LDFLAGS} "-L${CMAKE_BINARY_DIR} -l${PROJECT_NAME}")
+install(TARGETS ${TESTAPP} RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
