@@ -10,7 +10,7 @@ pkg_check_modules(pkgs REQUIRED
   libnghttp2
 )
 
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Werror -g -Wall -Wextra -fvisibility=hidden -fPIC -fdata-sections -ffunction-sections -Wl,--gc-sections")
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Werror -g -Wall -Wextra -fvisibility=hidden -fPIC -fdata-sections -ffunction-sections")
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wswitch-default -Wunreachable-code -Wpointer-arith -Waggregate-return -Wconversion")
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-unused-parameter -Wno-missing-field-initializers -Wdeclaration-after-statement -Wcast-align")
 

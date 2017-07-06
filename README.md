@@ -1,3 +1,6 @@
+[![Coverity Scan Build Status](https://scan.coverity.com/projects/12579/badge.svg)](https://scan.coverity.com/projects/webispy-nghttp2_example)
+[![Build Status](https://travis-ci.org/webispy/nghttp2_example.svg?branch=master)](https://travis-ci.org/webispy/nghttp2_example)
+
 # nghttp2 example
 http/2 c client example
 
