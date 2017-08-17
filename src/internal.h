@@ -33,6 +33,7 @@
 struct _ghttp2_req {
   int stream_id;
   GHTTP2Client *ghttp2;
+  gchar *path;
 
   struct {
     GHashTable *headers;
@@ -41,9 +42,9 @@ struct _ghttp2_req {
 
     /* Request data */
     nghttp2_data_provider data_prd;
-    const void *data;
-    size_t data_size;
-    void (*data_cb)(GHTTP2Req *req, void *data, size_t data_size, void *user_data);
+
+    size_t data_sent;
+    GHTTP2RequestDataFunc data_cb;
     void *data_cb_user_data;
   } req;
 
@@ -53,8 +54,18 @@ struct _ghttp2_req {
     GHTTP2ResponseFunc cb;
     void *cb_user_data;
 
+    GHTTP2ResponseDataFunc data_cb;
+    void *data_cb_user_data;
+
+    GHTTP2ResponseHeaderFunc header_cb;
+    void *header_cb_user_data;
+
+#ifdef CONFIG_FILELOG_STREAM
     FILE *fp_response;
+#endif
   } resp;
+
+  void *user_data;
 };
 
 

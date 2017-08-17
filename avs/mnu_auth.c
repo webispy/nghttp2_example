@@ -6,17 +6,11 @@
 #include "avs.h"
 
 static char data_token[MENU_DATA_SIZE] = "none";
-static char data_refresh_token[MENU_DATA_SIZE] = "none";
 static char data_filename[MENU_DATA_SIZE] = "auth_config.txt";
 
 static int run_set_token(menu_manager *mm, struct menu_data *menu, void *user_data)
 {
-  return avs_set_token(user_data, data_token);
-}
-
-static int run_set_refresh_token(menu_manager *mm, struct menu_data *menu, void *user_data)
-{
-  return avs_set_refresh_token(user_data, data_token);
+  return anet_set_token(data_token);
 }
 
 static void store_line(FILE *fp, char *dest, size_t dest_size)
@@ -52,12 +46,10 @@ static int run_load(menu_manager *mm, struct menu_data *menu, void *user_data)
     return -1;
 
   store_line(fp, data_token, MENU_DATA_SIZE);
-  store_line(fp, data_refresh_token, MENU_DATA_SIZE);
 
   fclose(fp);
 
   run_set_token(mm, menu, user_data);
-  run_set_refresh_token(mm, menu, user_data);
 
   return 0;
 }
@@ -72,20 +64,22 @@ static int run_save(menu_manager *mm, struct menu_data *menu, void *user_data)
     return -1;
 
   fprintf(fp, "%s\n", data_token);
-  fprintf(fp, "%s\n", data_refresh_token);
 
   fclose(fp);
 
   return 0;
 }
 
+void mnu_auth_autorun(menu_manager *mm)
+{
+  run_load(mm, NULL, menu_manager_get_user_data(mm));
+}
+
 struct menu_data menu_auth[] = {
-	{ "1", "Set token", NULL, run_set_token, data_token },
-	{ "2", "Set refresh_token", NULL, run_set_refresh_token, data_refresh_token },
-	{ "_", NULL },
-	{ "3", "Load from file", NULL, run_load, NULL },
+  { "1", "Set token", NULL, run_set_token, data_token },
+  { "_", NULL },
+  { "3", "Load from file", NULL, run_load, NULL },
   { "4", "Save to file", NULL, run_save, NULL },
-  { "-", "(content: 1st-line=token, 2nd-line=refresh_token)", NULL },
-	{ "5", "- Set file path", NULL, NULL, data_filename },
-	{ NULL, NULL, },
+  { "5", "- Set file path", NULL, NULL, data_filename },
+  { NULL, NULL, },
 };

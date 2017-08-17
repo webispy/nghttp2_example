@@ -53,6 +53,7 @@ EXPORT_API GHTTP2Req* ghttp2_request_new(const char *path)
       g_free);
   req->resp.headers = g_hash_table_new_full(g_str_hash, g_str_equal, g_free,
       g_free);
+  req->path = g_strdup(path);
 
   g_hash_table_insert(req->req.headers, g_strdup(":method"), g_strdup("GET"));
   g_hash_table_insert(req->req.headers, g_strdup(":path"), g_strdup(path));
@@ -68,6 +69,10 @@ EXPORT_API void ghttp2_request_free(GHTTP2Req *req)
 {
   g_return_if_fail(req != NULL);
 
+  if (req->req.data_cb)
+    req->req.data_cb(req, NULL, 0, req->req.data_sent,
+        req->req.data_cb_user_data);
+
   if (req->ghttp2)
     ghttp2_client_remove_request(req->ghttp2, req);
 
@@ -77,24 +82,10 @@ EXPORT_API void ghttp2_request_free(GHTTP2Req *req)
   if (req->resp.headers)
     g_hash_table_destroy(req->resp.headers);
 
+  g_free(req->path);
+
   memset(req, 0, sizeof(GHTTP2Req));
   free(req);
-}
-
-EXPORT_API int ghttp2_request_set_client(GHTTP2Req *req, GHTTP2Client *client)
-{
-  g_return_val_if_fail(req != NULL, -1);
-
-  req->ghttp2 = client;
-
-  return 0;
-}
-
-EXPORT_API GHTTP2Client* ghttp2_request_get_client(GHTTP2Req *req)
-{
-  g_return_val_if_fail(req != NULL, NULL);
-
-  return req->ghttp2;
 }
 
 EXPORT_API int ghttp2_request_get_stream_id(GHTTP2Req *req)
@@ -102,13 +93,6 @@ EXPORT_API int ghttp2_request_get_stream_id(GHTTP2Req *req)
   g_return_val_if_fail(req != NULL, -1);
 
   return req->stream_id;
-}
-
-EXPORT_API void ghttp2_request_set_stream_id(GHTTP2Req *req, int stream_id)
-{
-  g_return_if_fail(req != NULL);
-
-  req->stream_id = stream_id;
 }
 
 EXPORT_API void ghttp2_request_add_header(GHTTP2Req *req, const char *name,
@@ -120,6 +104,7 @@ EXPORT_API void ghttp2_request_add_header(GHTTP2Req *req, const char *name,
   _set_header(req->req.headers, name, value);
 }
 
+#if 0
 static ssize_t _data_read_cb(nghttp2_session *session, int32_t stream_id,
     uint8_t *buf, size_t len, uint32_t *data_flags, nghttp2_data_source *source,
     void *user_data)
@@ -143,9 +128,9 @@ static ssize_t _data_read_cb(nghttp2_session *session, int32_t stream_id,
     req->req.data_size -= nread;
   }
 
-  dbg("nread=%zd", nread);
+  // dbg("nread=%zd", nread);
 
-  printf("%s\n", (char *) source->ptr);
+  // printf("%s\n", (char *) source->ptr);
 
   memcpy(buf, source->ptr, nread);
   source->ptr = (unsigned char *) source->ptr + nread;
@@ -159,13 +144,50 @@ EXPORT_API void ghttp2_request_set_data(GHTTP2Req *req, const void *data,
   g_return_if_fail(req != NULL);
   g_return_if_fail(data != NULL);
 
-  req->req.data = data;
+  req->req.data = malloc(data_size);
+  memcpy(req->req.data, data, data_size);
   req->req.data_size = data_size;
 
-  dbg("req=%p, data=%p, data_size=%zd", req, data, data_size);
+  dbg("req=%p, data=%p, data_size=%zd", req, req->req.data, data_size);
 
-  req->req.data_prd.source.ptr = (void *) data;
+  req->req.data_prd.source.ptr = (void *) req->req.data;
   req->req.data_prd.read_callback = _data_read_cb;
+}
+#endif
+
+static ssize_t _data_read_hook_cb(nghttp2_session *session, int32_t stream_id,
+    uint8_t *buf, size_t len, uint32_t *data_flags, nghttp2_data_source *source,
+    void *user_data)
+{
+  GHTTP2Client *obj = user_data;
+  GHTTP2Req *req;
+  size_t nread;
+
+  req = ghttp2_client_get_request_by_stream_id(obj, stream_id);
+
+  nread = req->req.data_cb(req, buf, len, req->req.data_sent,
+      req->req.data_cb_user_data);
+  if (nread == 0) {
+    *data_flags |= NGHTTP2_DATA_FLAG_EOF;
+    req->req.data_cb = NULL;
+    req->req.data_cb_user_data = NULL;
+  }
+
+  req->req.data_sent += nread;
+
+  return (ssize_t) nread;
+}
+
+EXPORT_API void ghttp2_request_set_data_callback(GHTTP2Req *req,
+    GHTTP2RequestDataFunc cb, void *user_data)
+{
+  g_return_if_fail(req != NULL);
+  g_return_if_fail(cb != NULL);
+
+  req->req.data_sent = 0;
+  req->req.data_cb = cb;
+  req->req.data_cb_user_data = user_data;
+  req->req.data_prd.read_callback = _data_read_hook_cb;
 }
 
 EXPORT_API void ghttp2_request_set_response_callback(GHTTP2Req *req,
@@ -175,6 +197,24 @@ EXPORT_API void ghttp2_request_set_response_callback(GHTTP2Req *req,
 
   req->resp.cb = cb;
   req->resp.cb_user_data = user_data;
+}
+
+EXPORT_API void ghttp2_request_set_response_data_callback(GHTTP2Req *req,
+    GHTTP2ResponseDataFunc cb, void *user_data)
+{
+  g_return_if_fail(req != NULL);
+
+  req->resp.data_cb = cb;
+  req->resp.data_cb_user_data = user_data;
+}
+
+EXPORT_API void ghttp2_request_set_response_header_callback(GHTTP2Req *req,
+    GHTTP2ResponseHeaderFunc cb, void *user_data)
+{
+  g_return_if_fail(req != NULL);
+
+  req->resp.header_cb = cb;
+  req->resp.header_cb_user_data = user_data;
 }
 
 EXPORT_API void ghttp2_request_set_header_authority(GHTTP2Req *req,

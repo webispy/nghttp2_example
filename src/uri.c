@@ -58,7 +58,6 @@ EXPORT_API GHTTP2Uri *ghttp2_uri_parse(const char *orig_uri)
       uri->port = 443;
   }
 
-  dbg("uri parsing succeed");
   return uri;
 }
 

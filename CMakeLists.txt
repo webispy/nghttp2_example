@@ -8,6 +8,9 @@ pkg_check_modules(pkgs REQUIRED
   glib-2.0
   openssl
   libnghttp2
+
+  #for test app
+  alsa
 )
 
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Werror -g -Wall -Wextra -fvisibility=hidden -fPIC -fdata-sections -ffunction-sections")
@@ -48,5 +51,6 @@ add_dependencies(ghttp2client ${PROJECT_NAME})
 target_link_libraries(ghttp2client ${pkgs_LDFLAGS} "-L${CMAKE_BINARY_DIR} -l${PROJECT_NAME}")
 install(TARGETS ghttp2client RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
-add_subdirectory(test)
+enable_testing()
+add_subdirectory(avs)
 

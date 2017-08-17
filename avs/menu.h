@@ -126,7 +126,7 @@ struct menu_data {
 menu_manager *menu_manager_new(struct menu_data items[], GMainLoop *mainloop);
 int menu_manager_run(menu_manager *mm);
 int menu_manager_set_user_data(menu_manager *mm, void *user_data);
-void *menu_manager_ref_user_data(menu_manager *mm);
+void *menu_manager_get_user_data(menu_manager *mm);
 
 pid_t get_tid(void);
 void hide_pid(void);

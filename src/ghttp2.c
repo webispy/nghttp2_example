@@ -19,6 +19,9 @@ struct _ghttp2_client {
   GHTTP2ResponseFunc push_cb;
   void *push_cb_user_data;
 
+  GHTTP2ConnectionStatusFunc connection_status_cb;
+  void *connection_status_cb_user_data;
+
   GList *reqs;
 };
 
@@ -43,21 +46,18 @@ static void _set_header(GHashTable *tbl, const char *key, const char *value)
 static void _fill_header_authority(GHTTP2Req *req)
 {
   GHTTP2Uri *uri;
-  GHTTP2Client *client;
   gchar *buf = NULL;
 
   g_return_if_fail(req != NULL);
-
-  client = ghttp2_request_get_client(req);
-  g_return_if_fail(client != NULL);
-  g_return_if_fail(client->uri != NULL);
+  g_return_if_fail(req->ghttp2 != NULL);
+  g_return_if_fail(req->ghttp2->uri != NULL);
 
   if (ghttp2_request_get_header_authority(req) == FALSE) {
     ghttp2_request_add_header(req, ":authority", NULL);
     return;
   }
 
-  uri = client->uri;
+  uri = req->ghttp2->uri;
   if (uri->userinfo)
     buf = g_strdup_printf("%s@%s:%d", uri->userinfo, uri->host, uri->port);
   else
@@ -84,8 +84,8 @@ static GHTTP2Req *_create_fake_request(GHTTP2Client *client, int stream_id)
   if (!req)
     return NULL;
 
-  ghttp2_request_set_stream_id(req, stream_id);
-  ghttp2_request_set_client(req, client);
+  req->ghttp2 = client;
+  req->stream_id = stream_id;
   ghttp2_request_set_response_callback(req, _push_response_cb, client);
 
   nghttp2_session_set_stream_user_data(client->session, stream_id, req);
@@ -117,6 +117,9 @@ static void _add_resp_header(GHTTP2Client *client, nghttp2_session *session,
   memcpy(v, value, valuelen);
 
   _set_header(req->resp.headers, k, v);
+
+  if (req->resp.header_cb)
+    req->resp.header_cb(req, k, v, req->resp.header_cb_user_data);
 }
 
 #ifdef CONFIG_VERBOSE
@@ -170,17 +173,21 @@ static int on_stream_close_callback(nghttp2_session *session, int32_t stream_id,
     uint32_t error_code, void *user_data)
 {
   GHTTP2Req *req;
-  int status;
 
 #ifdef CONFIG_VERBOSE
   verbose_stream_close(session, stream_id, error_code);
 #endif
 
-  status = nghttp2_session_get_stream_local_close(session, stream_id);
-  dbg("local close status = %d", status);
+#if 0
+  {
+    int status;
+    status = nghttp2_session_get_stream_local_close(session, stream_id);
+    dbg("local close status = %d", status);
 
-  status = nghttp2_session_get_stream_remote_close(session, stream_id);
-  dbg("remote close status = = %d", status);
+    status = nghttp2_session_get_stream_remote_close(session, stream_id);
+    dbg("remote close status = = %d", status);
+  }
+#endif
 
   req = nghttp2_session_get_stream_user_data(session, stream_id);
   if (!req) {
@@ -191,11 +198,13 @@ static int on_stream_close_callback(nghttp2_session *session, int32_t stream_id,
   if (req->resp.cb)
     req->resp.cb(req, req->resp.headers, req->resp.cb_user_data);
 
+#ifdef CONFIG_FILELOG_STREAM
   if (req->resp.fp_response) {
     dbg("close fp_response");
     fclose(req->resp.fp_response);
     req->resp.fp_response = NULL;
   }
+#endif
 
   ghttp2_client_remove_request(user_data, req);
 
@@ -214,7 +223,7 @@ static int on_data_chunk_recv_callback(nghttp2_session *session, uint8_t flags,
 
 #ifdef CONFIG_VERBOSE
   verbose_datachunk(session, flags, stream_id, len);
-  verbose_hexdump("\tdata ", data, len, 256, stdout);
+  verbose_hexdump("\t", data, len, 256, stdout);
 #endif
 
   if (len == 0)
@@ -226,6 +235,10 @@ static int on_data_chunk_recv_callback(nghttp2_session *session, uint8_t flags,
     return 0;
   }
 
+  if (req->resp.data_cb)
+    req->resp.data_cb(req, data, len, req->resp.data_cb_user_data);
+
+#ifdef CONFIG_FILELOG_STREAM
   if (!req->resp.fp_response) {
     char filename[255];
     snprintf(filename, 255, "stream-%d.dat", stream_id);
@@ -233,6 +246,7 @@ static int on_data_chunk_recv_callback(nghttp2_session *session, uint8_t flags,
   }
 
   fwrite(data, 1, len, req->resp.fp_response);
+#endif
 
   return 0;
 }
@@ -258,6 +272,10 @@ static void on_connection_disconnect(GHTTP2Connection *conn, void *user_data)
   GHTTP2Client *client = user_data;
 
   dbg("disconnected by peer");
+  if (client->connection_status_cb)
+    client->connection_status_cb(client, FALSE,
+        client->connection_status_cb_user_data);
+
   ghttp2_client_disconnect(client);
 }
 
@@ -349,6 +367,17 @@ EXPORT_API int ghttp2_client_set_push_callback(GHTTP2Client *obj,
   return 0;
 }
 
+EXPORT_API int ghttp2_client_set_connection_status_callback(GHTTP2Client *obj,
+    GHTTP2ConnectionStatusFunc cb, void *user_data)
+{
+  g_return_val_if_fail(obj != NULL, -1);
+
+  obj->connection_status_cb = cb;
+  obj->connection_status_cb_user_data = user_data;
+
+  return 0;
+}
+
 EXPORT_API int ghttp2_client_connect(GHTTP2Client *obj, const char *orig_uri)
 {
   int rv;
@@ -393,11 +422,12 @@ EXPORT_API int ghttp2_client_connect(GHTTP2Client *obj, const char *orig_uri)
     goto ERROR_RETURN;
   }
 
-  dbg("session connected (session=%p, obj=%p)", obj->session, obj);
+  if (obj->connection_status_cb)
+    obj->connection_status_cb(obj, TRUE, obj->connection_status_cb_user_data);
 
   return 0;
 
-ERROR_RETURN:
+  ERROR_RETURN:
   if (obj->uri) {
     ghttp2_uri_free(obj->uri);
     obj->uri = NULL;
@@ -438,12 +468,54 @@ EXPORT_API int ghttp2_client_disconnect(GHTTP2Client *obj)
   return 0;
 }
 
+static nghttp2_nv *nvlist_new(GHashTable *tbl, size_t *count)
+{
+  GList *keys;
+  guint length;
+  nghttp2_nv *nvlist = NULL;
+  GList *cur;
+  int i = 0;
+
+  keys = g_hash_table_get_keys(tbl);
+
+  length = g_list_length(keys);
+  if (length == 0) {
+    g_list_free(keys);
+    return NULL;
+  }
+
+  if (count)
+    *count = length;
+
+  nvlist = calloc(length, sizeof(nghttp2_nv));
+  if (!nvlist) {
+    g_list_free(keys);
+    return NULL;
+  }
+
+  keys = g_list_sort(keys, (GCompareFunc) g_strcmp0);
+
+  cur = keys;
+  while (cur) {
+    nvlist[i].name = (uint8_t *) cur->data;
+    nvlist[i].namelen = strlen((char *) nvlist[i].name);
+    nvlist[i].value = (uint8_t *) g_hash_table_lookup(tbl, cur->data);
+    nvlist[i].valuelen = strlen((char *) nvlist[i].value);
+
+    cur = cur->next;
+    i++;
+  }
+
+  g_list_free(keys);
+
+  return nvlist;
+}
+
 EXPORT_API int ghttp2_client_request(GHTTP2Client *obj, GHTTP2Req *req)
 {
   int stream_id;
   nghttp2_nv *nvlist = NULL;
-  GList *keys;
-  guint count;
+  size_t count = 0;
   nghttp2_data_provider *data_prd = NULL;
 
   g_return_val_if_fail(obj != NULL, -1);
@@ -452,56 +524,29 @@ EXPORT_API int ghttp2_client_request(GHTTP2Client *obj, GHTTP2Req *req)
 
   req->ghttp2 = obj;
 
-  if (req->req.data)
+  if (req->req.data_cb)
     data_prd = &req->req.data_prd;
 
   _fill_header_authority(req);
 
-  keys = g_hash_table_get_keys(req->req.headers);
-
-  count = g_list_length(keys);
-  if (count > 0) {
-    GList *cur;
-    int i = 0;
-
-    nvlist = calloc(count, sizeof(nghttp2_nv));
-    if (!nvlist) {
-      g_list_free(keys);
-      return -1;
-    }
-
-    keys = g_list_sort(keys, (GCompareFunc) g_strcmp0);
-
-    cur = keys;
-    while (cur) {
-      nvlist[i].name = (uint8_t *) cur->data;
-      nvlist[i].namelen = strlen((char *) nvlist[i].name);
-      nvlist[i].value = (uint8_t *) g_hash_table_lookup(req->req.headers,
-          cur->data);
-      nvlist[i].valuelen = strlen((char *) nvlist[i].value);
-
-      cur = cur->next;
-      i++;
-    }
-
-    g_list_free(keys);
-  }
+  nvlist = nvlist_new(req->req.headers, &count);
 
   stream_id = nghttp2_submit_request(obj->session, NULL, nvlist, count,
       data_prd, req);
   if (stream_id < 0) {
     err("nghttp2_submit_request() failed. error_code=%d, msg=%s", stream_id,
         nghttp2_strerror(stream_id));
-    free(nvlist);
+    if (nvlist)
+      free(nvlist);
     return -1;
   }
+
+  req->stream_id = stream_id;
 
   if (nvlist)
     free(nvlist);
 
   obj->reqs = g_list_append(obj->reqs, req);
-
-  req->stream_id = stream_id;
 
   dbg("new request(path '%s', stream_id=%d)",
       (char * )g_hash_table_lookup(req->req.headers, ":path"), req->stream_id);
@@ -533,7 +578,8 @@ EXPORT_API GHTTP2Req *ghttp2_client_get_request_by_stream_id(GHTTP2Client *obj,
 EXPORT_API void ghttp2_client_remove_request(GHTTP2Client *client,
     GHTTP2Req *req)
 {
-  dbg("request removed");
+  g_return_if_fail(client != NULL);
+  g_return_if_fail(req != NULL);
 
   client->reqs = g_list_remove(client->reqs, req);
 }

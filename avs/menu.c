@@ -32,7 +32,14 @@ int flag_pid_display = 1;
 
 static void _show_prompt(void)
 {
-	msgn("(%5d) >> ", get_tid());
+  struct timespec tp;
+  struct tm now;
+
+  clock_gettime(CLOCK_REALTIME, &tp);
+  localtime_r((time_t*) &tp.tv_sec, &now);
+
+  msgn("%02d:%02d:%02d.%03ld (%5d) >> ", now.tm_hour, now.tm_min, now.tm_sec,
+      tp.tv_nsec / 1000000L, get_tid());
 }
 
 static void _show_reserved_menu(void)
@@ -51,7 +58,21 @@ static void _show_input_ok(void)
 	mmsg(" > Saved.");
 }
 
-static void _show_menu(menu_manager *m, struct menu_data menu[])
+static void _invoke_item(menu_manager *mm, struct menu_data *item)
+{
+  int ret;
+
+  if (!item->callback)
+    return;
+
+  ret = item->callback(mm, item, mm->user_data);
+  if (ret < 0) {
+    mmsg(ANSI_COLOR_RED "'%s' failed. (ret=%d)" ANSI_COLOR_NORMAL, item->title,
+        ret);
+  }
+}
+
+static void _show_menu(menu_manager *mm, struct menu_data menu[])
 {
 	guint i = 0;
 	guint len = 0;
@@ -64,12 +85,12 @@ static void _show_menu(menu_manager *m, struct menu_data menu[])
 	mmsg("");
 	mmsg(HR_DOUBLE);
 
-	len = g_queue_get_length(m->title_stack);
+	len = g_queue_get_length(mm->title_stack);
 	msgn(ANSI_COLOR_YELLOW " Main");
 	if (len > 0) {
 		for (i = 0; i < len; i++) {
 			msgn(ANSI_COLOR_NORMAL " >> " ANSI_COLOR_YELLOW "%s",
-					(char * )g_queue_peek_nth(m->title_stack, i));
+					(char * )g_queue_peek_nth(mm->title_stack, i));
 		}
 	}
 	mmsg(ANSI_COLOR_NORMAL);
@@ -88,9 +109,7 @@ static void _show_menu(menu_manager *m, struct menu_data menu[])
 		}
 		else if (!g_strcmp0(item->key, "_")) {
 			mmsg(ANSI_COLOR_DARKGRAY HR_SINGLE2 ANSI_COLOR_NORMAL);
-
-			if (item->callback)
-				item->callback(m, item, m->user_data);
+			_invoke_item(mm, item);
 
 			i++;
 
@@ -98,8 +117,7 @@ static void _show_menu(menu_manager *m, struct menu_data menu[])
 		}
 		else if (!g_strcmp0(item->key, "*")) {
 			mmsg(" %s", item->title);
-			if (item->callback)
-				item->callback(m, item, m->user_data);
+      _invoke_item(mm, item);
 		}
 		else {
 			msgn(ANSI_COLOR_DARKGRAY " [" ANSI_COLOR_NORMAL "%3s"
@@ -203,7 +221,7 @@ static void _move_menu(menu_manager *mm, struct menu_data menu[], char *key)
 			}
 
 			if (item->callback && item->data == NULL) {
-				item->callback(mm, item, mm->user_data);
+	      _invoke_item(mm, item);
 				_show_prompt();
 			}
 
@@ -253,7 +271,7 @@ static gboolean on_menu_manager_keyboard(GIOChannel *src, GIOCondition con,
 			_show_input_ok();
 
       if (mm->saved_item) {
-        mm->saved_item->callback(mm, mm->saved_item, mm->user_data);
+        _invoke_item(mm, mm->saved_item);
         mm->saved_item = NULL;
       }
 		}
