@@ -9,7 +9,7 @@ http/2 c client example
 ### Install build dependency packages
 * Ubuntu
 ```sh
-apt install libglib2.0-dev libnghttp2-dev libssl-dev libhttp-parser-dev cmake
+apt install libglib2.0-dev libnghttp2-dev libssl-dev libhttp-parser-dev cmake libasound2-dev
 ```
 * Fedora
 ```sh

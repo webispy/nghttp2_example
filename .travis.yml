@@ -14,7 +14,7 @@ env:
 before_install:
   - sudo apt-get -qq update
   - sudo apt-get install -y autoconf automake autotools-dev libtool pkg-config zlib1g-dev libcunit1-dev libssl-dev libxml2-dev libev-dev libevent-dev libjansson-dev libjemalloc-dev libc-ares-dev
-  - sudo apt-get install -y cmake libglib2.0-dev libssl-dev libhttp-parser-dev
+  - sudo apt-get install -y cmake libglib2.0-dev libssl-dev libhttp-parser-dev libasound2-dev
   - echo -n | openssl s_client -connect scan.coverity.com:443 | sed -ne '/-BEGIN CERTIFICATE-/,/-END CERTIFICATE-/p' | sudo tee -a /etc/ssl/certs/ca-
 
 install:
